@@ -71,15 +71,25 @@ class ScoringService {
       });
     });
 
-    // 1. Daily Attendance Points (+1 Present, -1 Absent, 0 Leave)
-    (attendanceRes.attendance || []).forEach(att => {
+    // 1. Daily & Morning Attendance Points (+1 Present, -1 Absent, 0 Leave) from Attendance Matrix
+    const attRows = attendanceRes.rows || attendanceRes.attendance || [];
+    attRows.forEach(att => {
       const student = studentMap.get(att.discordId);
       if (student) {
-        if (att.status === 'P' || att.status === 'PRESENT') {
+        if (att.sessions && typeof att.sessions === 'object') {
+          Object.values(att.sessions).forEach(mark => {
+            const m = String(mark || "").toUpperCase().trim();
+            if (m === 'P' || m === 'PRESENT' || m.startsWith('P')) {
+              student.attendancePoints += constants.SCORING.ATTENDANCE_PRESENT;
+            } else if (m === 'A' || m === 'ABSENT' || m.startsWith('A')) {
+              student.attendancePoints += constants.SCORING.ATTENDANCE_ABSENT;
+            } // Leave 'L' is 0 points
+          });
+        } else if (att.status === 'P' || att.status === 'PRESENT') {
           student.attendancePoints += constants.SCORING.ATTENDANCE_PRESENT;
         } else if (att.status === 'A' || att.status === 'ABSENT') {
           student.attendancePoints += constants.SCORING.ATTENDANCE_ABSENT;
-        } // Leave 'L' is 0
+        }
       }
     });
 
