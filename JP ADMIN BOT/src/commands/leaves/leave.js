@@ -25,21 +25,30 @@ module.exports = {
     // 1. STUDENT LEAVE SUBMISSION: !leave
     // -------------------------------------------------------------
     if (commandName === 'leave' || commandName === 'leaverequest') {
-      // Direct command format: !leave <StartDate> <EndDate> <Reason>
-      if (args.length >= 3) {
-        const start = args[0];
-        const end = args[1];
-        const reason = args.slice(2).join(' ');
+      const todayStr = DateTimeUtil.getTodayDateStr();
 
-        // Basic date format validation
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
-          return message.reply({
-            embeds: [Embeds.warning(
-              "Invalid Date Format",
-              "Please use the standard `YYYY-MM-DD` date format.\n\n" +
-              "**Example:** `!leave 2026-08-27 2026-08-28 Sickness / Family emergency`"
-            )]
-          });
+      // Direct command format: !leave [StartDate] [EndDate] <Reason>
+      if (args.length > 0) {
+        let start = todayStr;
+        let end = todayStr;
+        let reason = "";
+
+        const isFirstDate = /^\d{4}-\d{2}-\d{2}$/.test(args[0]);
+        const isSecondDate = args[1] && /^\d{4}-\d{2}-\d{2}$/.test(args[1]);
+
+        if (isFirstDate && isSecondDate) {
+          start = args[0];
+          end = args[1];
+          reason = args.slice(2).join(' ') || "Excused absence";
+        } else if (isFirstDate) {
+          start = args[0];
+          end = args[0];
+          reason = args.slice(1).join(' ') || "Excused absence";
+        } else {
+          // No date mentioned -> Automatically defaults to the date of the post (Today)!
+          start = todayStr;
+          end = todayStr;
+          reason = args.join(' ');
         }
 
         const loadingMsg = await message.reply("⏳ **Submitting your leave request...**");
@@ -57,7 +66,7 @@ module.exports = {
             "Leave Request Under Review ⏳",
             `Hello <@${message.author.id}>, **your leave request is under review.**\n\n` +
             `• 🆔 **Request ID:** \`${res.requestId}\`\n` +
-            `• 📅 **Requested Dates:** \`${start}\` to \`${end}\`\n` +
+            `• 📅 **Requested Dates:** \`${start}\` ${start !== end ? `to \`${end}\`` : '(Today)'}\n` +
             `• 📝 **Reason:** ${reason}\n\n` +
             `🔔 **You will be notified when your leave is approved by mentors.**`
           );

@@ -7,6 +7,7 @@
  * 4. #job-tracking: Google Sheet link auto-registration
  */
 
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const constants = require('../config/constants');
 const GasClient = require('../services/gasClient');
 const GeminiService = require('../services/geminiService');
@@ -42,6 +43,12 @@ class MessageHandler {
     // 4. Handle #job-tracking Sheet Link Shares
     if (ChannelHelper.isChannel(message, 'JOB_TRACKING')) {
       await this.handleJobSheetPost(message);
+      return;
+    }
+
+    // 5. Handle #leave-request Posts
+    if (ChannelHelper.isChannel(message, 'LEAVE_REQUEST')) {
+      await this.handleLeavePost(message);
       return;
     }
   }
@@ -241,6 +248,80 @@ class MessageHandler {
       }
     } catch (e) {
       Logger.error("Error registering job sheet link:", e.message);
+    }
+  }
+
+  /**
+   * Handles direct message posts in #leave-request
+   * Automatically defaults to the post's date (today) if no date is specified by student!
+   */
+  static async handleLeavePost(message) {
+    try {
+      const studentId = message.author.id;
+      const studentName = message.author.displayName || message.author.username;
+      const todayStr = DateTimeUtil.getTodayDateStr();
+
+      // Check if message contains YYYY-MM-DD dates
+      const dateMatches = message.content.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [];
+      let start = todayStr;
+      let end = todayStr;
+
+      if (dateMatches.length >= 2) {
+        start = dateMatches[0];
+        end = dateMatches[1];
+      } else if (dateMatches.length === 1) {
+        start = dateMatches[0];
+        end = dateMatches[0];
+      }
+
+      const res = await GasClient.submitLeave(message.guild.id, {
+        discordId: studentId,
+        name: studentName,
+        startDate: start,
+        endDate: end,
+        reason: message.content.substring(0, 300)
+      });
+
+      message.react('📝').catch(() => {});
+
+      const studentEmbed = Embeds.info(
+        "Leave Request Under Review ⏳",
+        `Hello <@${studentId}>, **your leave request is under review.**\n\n` +
+        `• 🆔 **Request ID:** \`${res.requestId}\`\n` +
+        `• 📅 **Requested Dates:** \`${start}\` ${start !== end ? `to \`${end}\`` : '(Today)'}\n` +
+        `• 📝 **Reason:** ${message.content.substring(0, 200)}\n\n` +
+        `🔔 **You will be notified when your leave is approved by mentors.**`
+      );
+
+      await message.reply({ embeds: [studentEmbed] }).catch(() => {});
+
+      // Forward to Mentor/Admin channel for immediate review
+      const mentorChannel = ChannelHelper.findChannel(message.guild, 'BOT_ADMIN');
+      if (mentorChannel && mentorChannel.id !== message.channel.id) {
+        const mentorEmbed = Embeds.warning(
+          `📋 New Leave Request for Review (${res.requestId})`,
+          `• **Student:** <@${studentId}> (${studentName})\n` +
+          `• **Dates:** \`${start}\` to \`${end}\`\n` +
+          `• **Reason:** ${message.content.substring(0, 300)}\n` +
+          `• **Submitted:** ${DateTimeUtil.getFullTimestamp()}\n\n` +
+          `*Review and click below to decide:*`
+        );
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`leave_approve_${res.requestId}_${studentId}_${start}_${end}`)
+            .setLabel('✅ Approve Leave')
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId(`leave_reject_${res.requestId}_${studentId}_${start}_${end}`)
+            .setLabel('❌ Reject Leave')
+            .setStyle(ButtonStyle.Danger)
+        );
+
+        await mentorChannel.send({ embeds: [mentorEmbed], components: [row] }).catch(() => {});
+      }
+    } catch (e) {
+      Logger.error("Error handling leave post in channel:", e.message);
     }
   }
 }

@@ -107,7 +107,23 @@ class CatchupService {
               continue;
             }
 
-            // 4. Process Prefix Commands in any channel
+            // 4. Process #leave-request posts
+            if (ChannelHelper.isChannel(channel, 'LEAVE_REQUEST')) {
+              if (content.startsWith('!')) {
+                Logger.info(`[CatchupService] Catching up command '${content}' from ${message.author.tag} in #${channel.name}`);
+                await commandHandler.handle(message, client);
+                stats.commandsProcessed++;
+                await this.sleep(800);
+              } else {
+                Logger.info(`[CatchupService] Catching up leave request post from ${message.author.tag} in #${channel.name}`);
+                await MessageHandler.handleLeavePost(message);
+                stats.commandsProcessed++;
+                await this.sleep(800);
+              }
+              continue;
+            }
+
+            // 5. Process Prefix Commands in any channel
             if (content.startsWith('!')) {
               // Ignore !catchup itself to avoid recursion
               if (content.toLowerCase().startsWith('!catchup') || content.toLowerCase().startsWith('!scanpending')) {
