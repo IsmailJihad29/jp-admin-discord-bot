@@ -18,15 +18,33 @@ module.exports = {
     const guildId = message.guild.id;
 
     if (commandName === 'setupcohortsheet') {
+      const isCleanup = args[0]?.toLowerCase() === 'cleanup';
       const isFresh = args[0]?.toLowerCase() === 'fresh';
       const isConfirm = args[1]?.toLowerCase() === 'confirm';
       const sheetUrl = args[2] || args[0];
+
+      if (isCleanup) {
+        if (!isConfirm) {
+          return message.reply("⚠️ To remove old unused sheets from previous versions, run: `!setupcohortsheet cleanup confirm`");
+        }
+        const loading = await message.reply("🧹 Cleaning up old unused sheets from Google Sheets...");
+        try {
+          const res = await GasClient.request(guildId, 'cleanupOldSheets');
+          const embed = Embeds.success(
+            "Old Sheets Cleaned Up",
+            `• **Status:** ${res.status}\n• **Removed Tabs (${res.removedTabs?.length || 0}):** ${res.removedTabs?.join(', ') || 'None found'}\n• **Active Schema:** Only the 10 core tabs remain.`
+          );
+          return await loading.edit({ content: null, embeds: [embed] });
+        } catch (err) {
+          return await loading.edit({ content: null, embeds: [Embeds.error("Cleanup Failed", err.message)] });
+        }
+      }
 
       if (isFresh && !isConfirm) {
         return message.reply("⚠️ To perform a fresh sheet setup, run: `!setupcohortsheet fresh confirm <Google Sheet URL>`");
       }
 
-      const loading = await message.reply("📑 Initializing all 9 database tabs in Google Sheets...");
+      const loading = await message.reply("📑 Checking and provisioning core 10 database tabs in Google Sheets...");
       try {
         if (sheetUrl && sheetUrl.startsWith('http')) {
           const cohort = cohortManager.getCohort(guildId);
@@ -37,7 +55,7 @@ module.exports = {
         const res = await GasClient.initSheets(guildId, { fresh: isFresh });
         const embed = Embeds.success(
           "Cohort Sheet Provisioning Complete",
-          `• **Status:** ${res.status}\n• **Created Tabs (${res.createdTabs?.length || 0}):** ${res.createdTabs?.join(', ') || 'None'}\n• **Existing Tabs (${res.existingTabs?.length || 0}):** Verified\n• **Total 9-Tab Schema:** Ready`
+          `• **Status:** ${res.status}\n• **Created Tabs (${res.createdTabs?.length || 0}):** ${res.createdTabs?.join(', ') || 'None (All already exist)'}\n• **Existing Tabs (${res.existingTabs?.length || 0}):** Verified & Preserved\n• **Total 10-Tab Schema:** Ready`
         );
         await loading.edit({ content: null, embeds: [embed] });
       } catch (err) {

@@ -1,19 +1,50 @@
 /**
  * =========================================================================
  * JP ADMIN — EJP Mentorship Apps Script Backend
- * Version: v47
+ * Version: v48 (Streamlined 10-Tab Core Architecture)
  * Target: Google Sheets Database & API Endpoint
  * =========================================================================
  */
 
-var SCRIPT_VERSION = "v47";
+var SCRIPT_VERSION = "v48";
 var CONFIG = {
   SECRET_KEY: "CHANGE_THIS_SECRET_KEY", // Change this to your secret key
   TIMEZONE: "Asia/Dhaka"
 };
 
 /**
- * HTTP GET Endpoint for Health Checks, Status & Diagnostic
+ * -------------------------------------------------------------------------
+ * 1. Schema Definitions: Exactly 10 Required Sheets
+ * -------------------------------------------------------------------------
+ */
+var SCHEMA_DEFS = {
+  "All Data": ["Full Name", "Email", "Phone", "Discord Username", "Region", "Subregion", "Notes"],
+  "Bot_Map": ["Email", "Name", "Discord Username", "Discord ID", "Status", "Region", "Subregion", "Phone", "Match Source", "Review Note"],
+  "Attendance": ["Name", "Email", "Phone", "Discord ID", "Status", "Remarks"],
+  "Daily Attendance": ["Timestamp", "Email Address", "Full Name", "Discord ID", "Attendance Status"],
+  "Morning Attendance": ["Timestamp", "Email Address", "Full Name", "Discord ID", "Attendance Status"],
+  "Leave_Requests": ["Request ID", "Timestamp", "Discord ID", "Name", "Email", "Start Date", "End Date", "Reason", "Status", "Mentor Note"],
+  "Job_Sheets": ["Discord ID", "Name", "Email", "Sheet URL", "Sheet ID", "Tab GID", "Status", "Last Scraped"],
+  "Jobs_Daily": ["Date", "Email", "Count", "Name", "Discord ID", "Total Rows", "New Rows", "Points"],
+  "Interview_Log": ["Logged Date", "Name", "Discord ID", "Company", "Serial", "Interview Date", "Role Details", "Discord Link", "Timestamp"],
+  "Job_Tasks": ["Task ID", "Timestamp", "Discord ID", "Student Name", "Company", "Role", "Tech Stack", "Deadline", "Submission Status", "GitHub Link", "Task Link", "Description Link", "Submitted At", "Mentor Status", "Mentor Note", "Points Awarded"]
+};
+
+// List of legacy/old sheets that should be removed if cleanup is requested
+var LEGACY_SHEETS = [
+  "Dawn_Attendance",
+  "Appeal_Logs",
+  "Question_Bank",
+  "Scores",
+  "Outreach_Daily",
+  "Workshop_Attendance",
+  "Resumes",
+  "Projects",
+  "Form_Templates"
+];
+
+/**
+ * HTTP GET Endpoint for Health Checks & Diagnostics
  */
 function doGet(e) {
   try {
@@ -21,14 +52,8 @@ function doGet(e) {
     var action = params.action || "status";
 
     if (action === "status" || action === "doctor") {
-      return jsonResponse({
-        status: "OK",
-        version: SCRIPT_VERSION,
-        service: "JP Admin Apps Script Backend",
-        timestamp: new Date().toISOString(),
-        spreadsheetName: SpreadsheetApp.getActiveSpreadsheet().getName(),
-        spreadsheetId: SpreadsheetApp.getActiveSpreadsheet().getId()
-      });
+      var ss = SpreadsheetApp.getActiveSpreadsheet();
+      return jsonResponse(runDoctorCheck(ss));
     }
 
     if (!authenticate(params.secret)) {
@@ -42,7 +67,7 @@ function doGet(e) {
 }
 
 /**
- * HTTP POST Router for all Database Operations
+ * HTTP POST Router for Database Operations
  */
 function doPost(e) {
   try {
@@ -67,6 +92,9 @@ function doPost(e) {
       case "setupFresh":
         return jsonResponse(setupAllRequiredSheets(ss, data.options));
 
+      case "cleanupOldSheets":
+        return jsonResponse(cleanupOldUnusedSheets(ss));
+
       case "getRoster":
         return jsonResponse(getRosterData(ss));
 
@@ -85,11 +113,11 @@ function doPost(e) {
       case "recordAttendance":
         return jsonResponse(recordAttendanceSession(ss, data));
 
-      case "getDawnAttendance":
-        return jsonResponse(getDawnAttendanceData(ss));
+      case "scanDailyAttendance":
+        return jsonResponse(scanDailyAttendanceFromForm(ss, data.date));
 
-      case "recordDawnAttendance":
-        return jsonResponse(recordDawnAttendanceBatch(ss, data));
+      case "scanMorningAttendance":
+        return jsonResponse(scanMorningAttendanceFromForm(ss, data.date));
 
       case "submitLeave":
         return jsonResponse(submitLeaveRequest(ss, data));
@@ -100,29 +128,8 @@ function doPost(e) {
       case "getLeaves":
         return jsonResponse(getLeavesList(ss, data.status));
 
-      case "submitAppeal":
-        return jsonResponse(submitAppealRequest(ss, data));
-
-      case "updateAppeal":
-        return jsonResponse(updateAppealRequest(ss, data));
-
-      case "getAppeals":
-        return jsonResponse(getAppealsList(ss));
-
-      case "getQuestions":
-        return jsonResponse(getQuestionBank(ss, data.category, data.limit));
-
-      case "addQuestions":
-        return jsonResponse(addQuestionsToBank(ss, data.questions));
-
-      case "markQuestionUsed":
-        return jsonResponse(markQuestionUsedInBank(ss, data.questionId, data.usedOn));
-
-      case "recordScore":
-        return jsonResponse(recordStudentScore(ss, data));
-
-      case "getScores":
-        return jsonResponse(getScoresHistory(ss, data.days));
+      case "recordJobSheet":
+        return jsonResponse(recordJobSheetUrl(ss, data));
 
       case "recordJobDaily":
         return jsonResponse(recordJobDailyEntry(ss, data));
@@ -130,23 +137,11 @@ function doPost(e) {
       case "getJobsDaily":
         return jsonResponse(getJobsDailyHistory(ss, data.days));
 
-      case "recordOutreachDaily":
-        return jsonResponse(recordOutreachDailyEntry(ss, data));
-
-      case "getOutreachDaily":
-        return jsonResponse(getOutreachDailyHistory(ss, data.days));
-
       case "recordInterview":
         return jsonResponse(recordInterviewEntry(ss, data));
 
       case "getInterviews":
         return jsonResponse(getInterviewsHistory(ss, data.days));
-
-      case "scanDailyAttendance":
-        return jsonResponse(scanDailyAttendanceFromForm(ss, data.date));
-
-      case "scanMorningAttendance":
-        return jsonResponse(scanMorningAttendanceFromForm(ss, data.date));
 
       case "recordJobTask":
         return jsonResponse(recordJobTaskEntry(ss, data));
@@ -163,32 +158,11 @@ function doPost(e) {
       case "auditOverdueTasks":
         return jsonResponse(auditOverdueTasksBatch(ss));
 
-      case "recordWorkshop":
-        return jsonResponse(recordWorkshopEntry(ss, data));
-
-      case "recordResume":
-        return jsonResponse(recordResumeLink(ss, data));
-
-      case "recordProject":
-        return jsonResponse(recordProjectSubmission(ss, data));
-
-      case "saveFormTemplates":
-        return jsonResponse(saveFormTemplatesConfig(ss, data));
-
-      case "getFormTemplates":
-        return jsonResponse(getFormTemplatesConfig(ss));
-
-      case "getCohortsRegistry":
-        return jsonResponse(getCohortsRegistryData(ss));
-
-      case "saveCohort":
-        return jsonResponse(saveCohortRegistryData(ss, data));
-
       default:
         return errorResponse("Unknown action: " + action, 400);
     }
   } catch (err) {
-    return errorResponse("Internal Script Error: " + err.toString() + " (Stack: " + err.stack + ")", 500);
+    return errorResponse("Internal Script Error: " + err.toString(), 500);
   }
 }
 
@@ -220,22 +194,9 @@ function errorResponse(message, code) {
 
 /**
  * -------------------------------------------------------------------------
- * 1. Sheet Provisioning & Schema Initialization (9 Essential Tabs)
+ * 2. Sheet Provisioning: Creates ONLY Missing Tabs (Preserves Existing)
  * -------------------------------------------------------------------------
  */
-var SCHEMA_DEFS = {
-  "All Data": ["Full Name", "Email", "Phone", "Discord Username", "Region", "Subregion", "Notes"],
-  "Bot_Map": ["Email", "Name", "Discord Username", "Discord ID", "Status", "Region", "Subregion", "Phone", "Match Source", "Review Note"],
-  "Attendance": ["Name", "Email", "Phone", "Discord ID", "Status", "Remarks"],
-  "Daily Attendance": ["Timestamp", "Email Address", "Full Name", "Discord ID", "Attendance Status"],
-  "Morning Attendance": ["Timestamp", "Email Address", "Full Name", "Discord ID", "Attendance Status"],
-  "Leave_Requests": ["Request ID", "Timestamp", "Discord ID", "Name", "Email", "Start Date", "End Date", "Reason", "Status", "Mentor Note"],
-  "Job_Sheets": ["Discord ID", "Name", "Email", "Sheet URL", "Sheet ID", "Tab GID", "Status", "Last Scraped"],
-  "Jobs_Daily": ["Date", "Email", "Count", "Name", "Discord ID", "Total Rows", "New Rows", "Points"],
-  "Interview_Log": ["Logged Date", "Name", "Discord ID", "Company", "Serial", "Interview Date", "Role Details", "Discord Link", "Timestamp"],
-  "Job_Tasks": ["Task ID", "Timestamp", "Discord ID", "Student Name", "Company", "Role", "Tech Stack", "Deadline", "Submission Status", "GitHub Link", "Task Link", "Description Link", "Submitted At", "Mentor Status", "Mentor Note", "Points Awarded"]
-};
-
 function setupAllRequiredSheets(ss, options) {
   var created = [];
   var existing = [];
@@ -263,8 +224,24 @@ function setupAllRequiredSheets(ss, options) {
 }
 
 /**
+ * Optional Cleanup: Deletes unused legacy sheets from older versions
+ */
+function cleanupOldUnusedSheets(ss) {
+  var removed = [];
+  for (var i = 0; i < LEGACY_SHEETS.length; i++) {
+    var legacyTab = LEGACY_SHEETS[i];
+    var sheet = ss.getSheetByName(legacyTab);
+    if (sheet && ss.getSheets().length > 1) {
+      ss.deleteSheet(sheet);
+      removed.push(legacyTab);
+    }
+  }
+  return { status: "SUCCESS", removedTabs: removed };
+}
+
+/**
  * -------------------------------------------------------------------------
- * 2. Doctor Diagnostics
+ * 3. Doctor Diagnostics
  * -------------------------------------------------------------------------
  */
 function runDoctorCheck(ss) {
@@ -289,13 +266,14 @@ function runDoctorCheck(ss) {
     missingTabs: missingTabs,
     tabStats: tabStats,
     spreadsheetId: ss.getId(),
+    spreadsheetName: ss.getName(),
     timezone: ss.getSpreadsheetTimeZone()
   };
 }
 
 /**
  * -------------------------------------------------------------------------
- * 3. Roster & Identity Management (Bot_Map, All Data, Roster Review)
+ * 4. Roster Management (Always Sync from 'All Data' to 'Bot_Map')
  * -------------------------------------------------------------------------
  */
 function getRosterData(ss) {
@@ -332,7 +310,7 @@ function getRosterData(ss) {
     }
   }
 
-  // Fallback / Initial load from 'All Data' master tab if Bot_Map is currently empty
+  // Fallback: If Bot_Map is empty, load directly from 'All Data' master tab
   if (students.length === 0 && allDataSheet && allDataSheet.getLastRow() > 1) {
     var allDataRows = allDataSheet.getDataRange().getValues();
     for (var k = 1; k < allDataRows.length; k++) {
@@ -516,7 +494,7 @@ function syncRosterData(ss, discordMembers) {
         botMapValues[rowIdx][4] = m.status || "active";
         processedBotMapRows[rowIdx] = true;
         synced++;
-      } else if (rowIdx === undefined && !allDataStudents.some(s => s.username === cleanUsername)) {
+      } else if (rowIdx === undefined && !allDataStudents.some(function(s) { return s.username === cleanUsername; })) {
         rowsToAppend.push([
           m.email || "",
           displayName || rawUsername,
@@ -570,21 +548,9 @@ function updateStudentProfileData(ss, data) {
     if (data.phone) sheet.getRange(targetRow, 8).setValue(data.phone);
     if (data.reviewNote) sheet.getRange(targetRow, 10).setValue(data.reviewNote);
     return { status: "UPDATED", row: targetRow };
-  } else {
-    sheet.appendRow([
-      data.email || "",
-      data.name || "",
-      data.username || "",
-      discordId,
-      "active",
-      data.region || "",
-      data.subregion || "",
-      data.phone || "",
-      "Manual Edit",
-      data.reviewNote || ""
-    ]);
-    return { status: "CREATED", row: sheet.getLastRow() };
   }
+
+  return { error: "Student not found in Bot_Map" };
 }
 
 function setStudentStatusData(ss, discordId, status, note) {
@@ -592,30 +558,13 @@ function setStudentStatusData(ss, discordId, status, note) {
   if (!sheet) return { error: "Bot_Map sheet not found" };
 
   var values = sheet.getDataRange().getValues();
-  var targetRow = -1;
-
   for (var i = 1; i < values.length; i++) {
     if (String(values[i][3]).trim() === String(discordId).trim()) {
-      targetRow = i + 1;
-      break;
+      var row = i + 1;
+      sheet.getRange(row, 5).setValue(status);
+      if (note) sheet.getRange(row, 10).setValue(note);
+      return { status: "SUCCESS", updatedStatus: status, row: row };
     }
-  }
-
-  if (targetRow > 0) {
-    sheet.getRange(targetRow, 5).setValue(status);
-    if (note) sheet.getRange(targetRow, 10).setValue(note);
-    
-    // Highlight inactive as dark red or active as normal
-    var rowRange = sheet.getRange(targetRow, 1, 1, 10);
-    if (status === "inactive" || status === "left") {
-      rowRange.setBackground("#fee2e2"); // light red
-    } else if (status === "hired") {
-      rowRange.setBackground("#dcfce7"); // light green
-    } else {
-      rowRange.setBackground("#ffffff"); // neutral
-    }
-
-    return { status: "SUCCESS", discordId: discordId, newStatus: status };
   }
 
   return { status: "NOT_FOUND", discordId: discordId };
@@ -623,7 +572,7 @@ function setStudentStatusData(ss, discordId, status, note) {
 
 /**
  * -------------------------------------------------------------------------
- * 4. Attendance & Form Operations
+ * 5. Attendance & Form Operations
  * -------------------------------------------------------------------------
  */
 function recordAttendanceSession(ss, data) {
@@ -633,7 +582,6 @@ function recordAttendanceSession(ss, data) {
   var dateStr = data.date || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
   var records = data.records || []; // array of { email, discordId, status: 'P' | 'L' | 'A' }
 
-  // Check if date column exists
   var headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 6)).getValues()[0];
   var dateColIndex = -1;
 
@@ -700,653 +648,7 @@ function getAttendanceData(ss) {
 }
 
 /**
- * -------------------------------------------------------------------------
- * 5. Dawn Focus Circle Attendance
- * -------------------------------------------------------------------------
- */
-function recordDawnAttendanceBatch(ss, data) {
-  var sheet = ss.getSheetByName("Dawn_Attendance");
-  if (!sheet) return { error: "Dawn_Attendance sheet not found" };
-
-  var dateStr = data.date || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
-  var entries = data.entries || []; // { discordId, name, email, mark: 'P · HH:MM' | 'L' | 'A' | 'Joined' | 'Removed' }
-
-  var headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 5)).getValues()[0];
-  var colIndex = -1;
-
-  for (var c = 5; c < headers.length; c++) {
-    if (String(headers[c]) === dateStr) {
-      colIndex = c + 1;
-      break;
-    }
-  }
-
-  if (colIndex === -1) {
-    colIndex = headers.length + 1;
-    sheet.getRange(1, colIndex).setValue(dateStr).setFontWeight("bold");
-  }
-
-  var values = sheet.getDataRange().getValues();
-  var idMap = {};
-  for (var r = 1; r < values.length; r++) {
-    var dId = String(values[r][3] || "").trim();
-    if (dId) idMap[dId] = r + 1;
-  }
-
-  entries.forEach(function(entry) {
-    var row = idMap[entry.discordId];
-    if (row) {
-      sheet.getRange(row, colIndex).setValue(entry.mark);
-    } else {
-      var newRow = [entry.name || "", entry.email || "", entry.phone || "", entry.discordId, "active"];
-      while (newRow.length < colIndex - 1) newRow.push("");
-      newRow.push(entry.mark);
-      sheet.appendRow(newRow);
-      idMap[entry.discordId] = sheet.getLastRow();
-    }
-  });
-
-  return { status: "SUCCESS", date: dateStr, count: entries.length };
-}
-
-function getDawnAttendanceData(ss) {
-  var sheet = ss.getSheetByName("Dawn_Attendance");
-  if (!sheet || sheet.getLastRow() <= 1) return { dawnRecords: [] };
-
-  var values = sheet.getDataRange().getValues();
-  var dates = values[0].slice(5);
-  var records = [];
-
-  for (var i = 1; i < values.length; i++) {
-    var row = values[i];
-    var marks = {};
-    for (var d = 0; d < dates.length; d++) {
-      marks[dates[d]] = row[5 + d] || "A";
-    }
-    records.push({
-      name: row[0],
-      email: row[1],
-      phone: row[2],
-      discordId: row[3],
-      status: row[4],
-      marks: marks
-    });
-  }
-
-  return { dates: dates, records: records };
-}
-
-/**
- * -------------------------------------------------------------------------
- * 6. Leave Requests & Appeals
- * -------------------------------------------------------------------------
- */
-function submitLeaveRequest(ss, data) {
-  var sheet = ss.getSheetByName("Leave_Requests");
-  if (!sheet) return { error: "Leave_Requests sheet not found" };
-
-  var reqId = "LR-" + new Date().getTime().toString(36).toUpperCase();
-  var timestamp = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
-
-  sheet.appendRow([
-    reqId,
-    timestamp,
-    data.discordId || "",
-    data.name || "",
-    data.email || "",
-    data.startDate || "",
-    data.endDate || "",
-    data.reason || "",
-    "PENDING",
-    ""
-  ]);
-
-  return { status: "SUCCESS", requestId: reqId };
-}
-
-function updateLeaveRequest(ss, data) {
-  var sheet = ss.getSheetByName("Leave_Requests");
-  if (!sheet) return { error: "Leave_Requests sheet not found" };
-
-  var reqId = String(data.requestId || "").trim();
-  var status = data.status || "APPROVED";
-  var note = data.note || "";
-  var values = sheet.getDataRange().getValues();
-
-  for (var i = 1; i < values.length; i++) {
-    if (String(values[i][0]).trim() === reqId) {
-      sheet.getRange(i + 1, 9).setValue(status);
-      sheet.getRange(i + 1, 10).setValue(note);
-      return { status: "SUCCESS", requestId: reqId, updatedStatus: status };
-    }
-  }
-
-  return { status: "NOT_FOUND", requestId: reqId };
-}
-
-function getLeavesList(ss, filterStatus) {
-  var sheet = ss.getSheetByName("Leave_Requests");
-  if (!sheet || sheet.getLastRow() <= 1) return { leaves: [] };
-
-  var values = sheet.getDataRange().getValues();
-  var list = [];
-
-  for (var i = 1; i < values.length; i++) {
-    var row = values[i];
-    if (!filterStatus || String(row[8]).toUpperCase() === filterStatus.toUpperCase()) {
-      list.push({
-        requestId: row[0],
-        timestamp: row[1],
-        discordId: row[2],
-        name: row[3],
-        email: row[4],
-        startDate: row[5],
-        endDate: row[6],
-        reason: row[7],
-        status: row[8],
-        mentorNote: row[9]
-      });
-    }
-  }
-
-  return { leaves: list };
-}
-
-function submitAppealRequest(ss, data) {
-  var sheet = ss.getSheetByName("Appeal_Logs");
-  if (!sheet) return { error: "Appeal_Logs sheet not found" };
-
-  var appealId = "AP-" + new Date().getTime().toString(36).toUpperCase();
-  var timestamp = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
-
-  sheet.appendRow([
-    appealId,
-    timestamp,
-    data.discordId || "",
-    data.name || "",
-    data.contact || "",
-    data.type || "BOOTCAMP_REMOVAL",
-    data.dates || "",
-    data.explanation || "",
-    "PENDING",
-    ""
-  ]);
-
-  return { status: "SUCCESS", appealId: appealId };
-}
-
-function updateAppealRequest(ss, data) {
-  var sheet = ss.getSheetByName("Appeal_Logs");
-  if (!sheet) return { error: "Appeal_Logs sheet not found" };
-
-  var appealId = String(data.appealId || "").trim();
-  var status = data.status || "APPROVED";
-  var note = data.note || "";
-  var values = sheet.getDataRange().getValues();
-
-  for (var i = 1; i < values.length; i++) {
-    if (String(values[i][0]).trim() === appealId) {
-      sheet.getRange(i + 1, 9).setValue(status);
-      sheet.getRange(i + 1, 10).setValue(note);
-      return { status: "SUCCESS", appealId: appealId, updatedStatus: status };
-    }
-  }
-
-  return { status: "NOT_FOUND", appealId: appealId };
-}
-
-function getAppealsList(ss) {
-  var sheet = ss.getSheetByName("Appeal_Logs");
-  if (!sheet || sheet.getLastRow() <= 1) return { appeals: [] };
-
-  var values = sheet.getDataRange().getValues();
-  var list = [];
-
-  for (var i = 1; i < values.length; i++) {
-    var row = values[i];
-    list.push({
-      appealId: row[0],
-      timestamp: row[1],
-      discordId: row[2],
-      name: row[3],
-      contact: row[4],
-      type: row[5],
-      dates: row[6],
-      explanation: row[7],
-      status: row[8],
-      decisionNote: row[9]
-    });
-  }
-
-  return { appeals: list };
-}
-
-/**
- * -------------------------------------------------------------------------
- * 7. Question Bank & Scoring
- * -------------------------------------------------------------------------
- */
-function getQuestionBank(ss, category, limit) {
-  var sheet = ss.getSheetByName("Question_Bank");
-  if (!sheet || sheet.getLastRow() <= 1) return { questions: [] };
-
-  var values = sheet.getDataRange().getValues();
-  var list = [];
-  var max = limit || 10;
-
-  for (var i = 1; i < values.length; i++) {
-    var row = values[i];
-    var cat = String(row[1] || "").toLowerCase();
-    var usedOn = row[5];
-
-    if ((!category || cat === category.toLowerCase()) && (!usedOn || String(usedOn).trim() === "")) {
-      list.push({
-        id: row[0],
-        category: row[1],
-        difficulty: row[2],
-        question: row[3],
-        modelAnswer: row[4],
-        usedOn: row[5],
-        rowIndex: i + 1
-      });
-      if (list.length >= max) break;
-    }
-  }
-
-  return { questions: list, count: list.length };
-}
-
-function addQuestionsToBank(ss, questions) {
-  var sheet = ss.getSheetByName("Question_Bank");
-  if (!sheet) return { error: "Question_Bank sheet not found" };
-
-  var added = 0;
-  if (questions && Array.isArray(questions)) {
-    questions.forEach(function(q) {
-      var id = q.id || "Q-" + new Date().getTime().toString(36).toUpperCase() + "-" + Math.floor(Math.random()*1000);
-      sheet.appendRow([
-        id,
-        q.category || "technical",
-        q.difficulty || "medium",
-        q.question || "",
-        q.modelAnswer || "",
-        ""
-      ]);
-      added++;
-    });
-  }
-
-  return { status: "SUCCESS", addedCount: added };
-}
-
-function markQuestionUsedInBank(ss, questionId, usedOnDate) {
-  var sheet = ss.getSheetByName("Question_Bank");
-  if (!sheet) return { error: "Question_Bank sheet not found" };
-
-  var dateStr = usedOnDate || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
-  var values = sheet.getDataRange().getValues();
-
-  for (var i = 1; i < values.length; i++) {
-    if (String(values[i][0]).trim() === String(questionId).trim()) {
-      sheet.getRange(i + 1, 6).setValue(dateStr);
-      return { status: "SUCCESS", questionId: questionId, usedOn: dateStr };
-    }
-  }
-
-  return { status: "NOT_FOUND", questionId: questionId };
-}
-
-function recordStudentScore(ss, data) {
-  var sheet = ss.getSheetByName("Scores");
-  if (!sheet) return { error: "Scores sheet not found" };
-
-  var scoreId = "SC-" + new Date().getTime().toString(36).toUpperCase();
-  var dateStr = data.date || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
-
-  sheet.appendRow([
-    scoreId,
-    dateStr,
-    data.discordId || "",
-    data.name || "",
-    data.questionId || "",
-    data.category || "",
-    data.score || 0,
-    data.cheatFlag ? "YES" : "NO",
-    data.firstCorrect ? "YES" : "NO",
-    data.bonusPoints || 0,
-    data.totalPoints || 0
-  ]);
-
-  return { status: "SUCCESS", scoreId: scoreId };
-}
-
-function getScoresHistory(ss, days) {
-  var sheet = ss.getSheetByName("Scores");
-  if (!sheet || sheet.getLastRow() <= 1) return { scores: [] };
-
-  var values = sheet.getDataRange().getValues();
-  var list = [];
-
-  for (var i = 1; i < values.length; i++) {
-    var row = values[i];
-    list.push({
-      scoreId: row[0],
-      date: row[1],
-      discordId: row[2],
-      name: row[3],
-      questionId: row[4],
-      category: row[5],
-      score: row[6],
-      cheatFlag: row[7] === "YES",
-      firstCorrect: row[8] === "YES",
-      bonusPoints: row[9],
-      totalPoints: row[10]
-    });
-  }
-
-  return { scores: list };
-}
-
-/**
- * -------------------------------------------------------------------------
- * 8. Job Tracking, Outreach, Interviews, Resumes & Projects
- * -------------------------------------------------------------------------
- */
-function recordJobDailyEntry(ss, data) {
-  var sheet = ss.getSheetByName("Jobs_Daily");
-  if (!sheet) return { error: "Jobs_Daily sheet not found" };
-
-  var dateStr = data.date || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
-
-  sheet.appendRow([
-    dateStr,
-    data.email || "",
-    data.count || 0,
-    data.name || "",
-    data.discordId || "",
-    data.totalRows || 0,
-    data.newRows || 0
-  ]);
-
-  return { status: "SUCCESS", date: dateStr };
-}
-
-function getJobsDailyHistory(ss, days) {
-  var sheet = ss.getSheetByName("Jobs_Daily");
-  if (!sheet || sheet.getLastRow() <= 1) return { jobs: [] };
-
-  var values = sheet.getDataRange().getValues();
-  var list = [];
-
-  for (var i = 1; i < values.length; i++) {
-    var row = values[i];
-    list.push({
-      date: row[0],
-      email: row[1],
-      count: row[2],
-      name: row[3],
-      discordId: row[4],
-      totalRows: row[5],
-      newRows: row[6]
-    });
-  }
-
-  return { jobs: list };
-}
-
-function recordOutreachDailyEntry(ss, data) {
-  var sheet = ss.getSheetByName("Outreach_Daily");
-  if (!sheet) return { error: "Outreach_Daily sheet not found" };
-
-  var dateStr = data.date || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
-  var timestamp = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
-
-  sheet.appendRow([
-    dateStr,
-    data.discordId || "",
-    data.name || "",
-    data.email || "",
-    data.messageId || "",
-    data.count || 1,
-    timestamp
-  ]);
-
-  return { status: "SUCCESS", date: dateStr };
-}
-
-function getOutreachDailyHistory(ss, days) {
-  var sheet = ss.getSheetByName("Outreach_Daily");
-  if (!sheet || sheet.getLastRow() <= 1) return { outreach: [] };
-
-  var values = sheet.getDataRange().getValues();
-  var list = [];
-
-  for (var i = 1; i < values.length; i++) {
-    var row = values[i];
-    list.push({
-      date: row[0],
-      discordId: row[1],
-      name: row[2],
-      email: row[3],
-      messageId: row[4],
-      count: row[5],
-      timestamp: row[6]
-    });
-  }
-
-  return { outreach: list };
-}
-
-function recordInterviewEntry(ss, data) {
-  var sheet = ss.getSheetByName("Interview_Log");
-  if (!sheet) return { error: "Interview_Log sheet not found" };
-
-  var loggedDate = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
-  var timestamp = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
-
-  sheet.appendRow([
-    loggedDate,
-    data.name || "",
-    data.discordId || "",
-    data.company || "",
-    data.serial || 1,
-    data.interviewDate || loggedDate,
-    data.roleDetails || "",
-    data.discordLink || "",
-    timestamp
-  ]);
-
-  return { status: "SUCCESS", loggedDate: loggedDate };
-}
-
-function getInterviewsHistory(ss, days) {
-  var sheet = ss.getSheetByName("Interview_Log");
-  if (!sheet || sheet.getLastRow() <= 1) return { interviews: [] };
-
-  var values = sheet.getDataRange().getValues();
-  var list = [];
-
-  for (var i = 1; i < values.length; i++) {
-    var row = values[i];
-    list.push({
-      loggedDate: row[0],
-      name: row[1],
-      discordId: row[2],
-      company: row[3],
-      serial: row[4],
-      interviewDate: row[5],
-      roleDetails: row[6],
-      discordLink: row[7],
-      timestamp: row[8]
-    });
-  }
-
-  return { interviews: list };
-}
-
-function recordWorkshopEntry(ss, data) {
-  var sheet = ss.getSheetByName("Workshop_Attendance");
-  if (!sheet) return { error: "Workshop_Attendance sheet not found" };
-
-  var dateStr = data.date || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
-
-  sheet.appendRow([
-    dateStr,
-    data.slot || "morning",
-    data.discordId || "",
-    data.name || "",
-    data.email || "",
-    data.status || "ATTENDED"
-  ]);
-
-  return { status: "SUCCESS", date: dateStr };
-}
-
-function recordResumeLink(ss, data) {
-  var sheet = ss.getSheetByName("Resumes");
-  if (!sheet) return { error: "Resumes sheet not found" };
-
-  var discordId = String(data.discordId || "").trim();
-  var values = sheet.getDataRange().getValues();
-  var targetRow = -1;
-
-  for (var i = 1; i < values.length; i++) {
-    if (String(values[i][0]).trim() === discordId) {
-      targetRow = i + 1;
-      break;
-    }
-  }
-
-  var timestamp = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
-
-  if (targetRow > 0) {
-    sheet.getRange(targetRow, 4).setValue(data.messageLink || data.url || "");
-    sheet.getRange(targetRow, 5).setValue(timestamp);
-  } else {
-    sheet.appendRow([
-      discordId,
-      data.name || "",
-      data.email || "",
-      data.messageLink || data.url || "",
-      timestamp
-    ]);
-  }
-
-  return { status: "SUCCESS", discordId: discordId };
-}
-
-function recordProjectSubmission(ss, data) {
-  var sheet = ss.getSheetByName("Projects");
-  if (!sheet) return { error: "Projects sheet not found" };
-
-  var timestamp = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
-
-  sheet.appendRow([
-    data.discordId || "",
-    data.name || "",
-    data.projectTitle || "",
-    data.githubUrl || "",
-    data.liveUrl || "",
-    data.summary || "",
-    timestamp
-  ]);
-
-  return { status: "SUCCESS", discordId: data.discordId };
-}
-
-/**
- * -------------------------------------------------------------------------
- * 9. Form Templates Configuration
- * -------------------------------------------------------------------------
- */
-function saveFormTemplatesConfig(ss, data) {
-  var sheet = ss.getSheetByName("Form_Templates");
-  if (!sheet) return { error: "Form_Templates sheet not found" };
-
-  var templateName = data.name || "default";
-  var jsonStr = typeof data.config === "string" ? data.config : JSON.stringify(data.config);
-  var timestamp = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
-
-  var values = sheet.getDataRange().getValues();
-  var targetRow = -1;
-
-  for (var i = 1; i < values.length; i++) {
-    if (String(values[i][0]).trim() === templateName) {
-      targetRow = i + 1;
-      break;
-    }
-  }
-
-  if (targetRow > 0) {
-    sheet.getRange(targetRow, 2).setValue(jsonStr);
-    sheet.getRange(targetRow, 3).setValue(timestamp);
-  } else {
-    sheet.appendRow([templateName, jsonStr, timestamp]);
-  }
-
-  return { status: "SUCCESS", templateName: templateName };
-}
-
-function getFormTemplatesConfig(ss) {
-  var sheet = ss.getSheetByName("Form_Templates");
-  if (!sheet || sheet.getLastRow() <= 1) return { templates: {} };
-
-  var values = sheet.getDataRange().getValues();
-  var templates = {};
-
-  for (var i = 1; i < values.length; i++) {
-    var name = values[i][0];
-    try {
-      templates[name] = JSON.parse(values[i][1]);
-    } catch (e) {
-      templates[name] = values[i][1];
-    }
-  }
-
-  return { templates: templates };
-}
-
-/**
- * -------------------------------------------------------------------------
- * 10. Multi-Cohort Registry Store (STRIDE State)
- * -------------------------------------------------------------------------
- */
-function getCohortsRegistryData(ss) {
-  var props = PropertiesService.getScriptProperties();
-  var cohortsJson = props.getProperty("COHORTS_REGISTRY");
-  try {
-    return { cohorts: cohortsJson ? JSON.parse(cohortsJson) : [] };
-  } catch (e) {
-    return { cohorts: [] };
-  }
-}
-
-function saveCohortRegistryData(ss, data) {
-  var props = PropertiesService.getScriptProperties();
-  var cohortsJson = props.getProperty("COHORTS_REGISTRY");
-  var cohorts = [];
-  try {
-    if (cohortsJson) cohorts = JSON.parse(cohortsJson);
-  } catch (e) {}
-
-  var updated = false;
-  for (var i = 0; i < cohorts.length; i++) {
-    if (cohorts[i].serverId === data.serverId) {
-      cohorts[i] = data;
-      updated = true;
-      break;
-    }
-  }
-  if (!updated) cohorts.push(data);
-
-  props.setProperty("COHORTS_REGISTRY", JSON.stringify(cohorts));
-  return { status: "SUCCESS", count: cohorts.length };
-}
-
-/**
- * -------------------------------------------------------------------------
- * 11. Daily Attendance Point Scanner (+1 Present, -1 Absent, 0 Leave)
- * -------------------------------------------------------------------------
+ * Daily Attendance Scanner (+1 Present, -1 Absent, 0 Leave)
  */
 function scanDailyAttendanceFromForm(ss, dateStr) {
   var targetDate = dateStr || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
@@ -1363,7 +665,7 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
     return { error: "Required sheets (Bot_Map / Attendance) not found" };
   }
 
-  // 1. Get all active students from Bot_Map
+  // 1. Get active students
   var botMapValues = botMapSheet.getDataRange().getValues();
   var students = [];
   for (var i = 1; i < botMapValues.length; i++) {
@@ -1378,8 +680,8 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
     }
   }
 
-  // 2. Read approved leaves for this date
-  var approvedLeaves = new Set();
+  // 2. Approved leaves
+  var approvedLeaves = {};
   if (leaveSheet && leaveSheet.getLastRow() > 1) {
     var leaveValues = leaveSheet.getDataRange().getValues();
     for (var l = 1; l < leaveValues.length; l++) {
@@ -1390,14 +692,14 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
 
       if (lStatus === 'approved' && lDiscordId) {
         if (targetDate >= lStart && targetDate <= lEnd) {
-          approvedLeaves.add(lDiscordId);
+          approvedLeaves[lDiscordId] = true;
         }
       }
     }
   }
 
-  // 3. Scan Form responses for target date
-  var presentSubmissions = new Set();
+  // 3. Scan Form responses
+  var presentSubmissions = {};
   if (formSheet && formSheet.getLastRow() > 1) {
     var formValues = formSheet.getDataRange().getValues();
     for (var f = 1; f < formValues.length; f++) {
@@ -1414,14 +716,14 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
         for (var c = 0; c < row.length; c++) {
           var cellVal = String(row[c] || "").toLowerCase().trim().replace(/^@/, '');
           if (cellVal) {
-            presentSubmissions.add(cellVal);
+            presentSubmissions[cellVal] = true;
           }
         }
       }
     }
   }
 
-  // 4. Determine status and points for every active student
+  // 4. Calculate status
   var presentCount = 0;
   var absentCount = 0;
   var leaveCount = 0;
@@ -1429,9 +731,9 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
 
   students.forEach(function(s) {
     var isPresent = false;
-    if (s.email && presentSubmissions.has(s.email.toLowerCase())) isPresent = true;
-    if (s.username && presentSubmissions.has(s.username.toLowerCase())) isPresent = true;
-    if (s.discordId && presentSubmissions.has(s.discordId)) isPresent = true;
+    if (s.email && presentSubmissions[s.email.toLowerCase()]) isPresent = true;
+    if (s.username && presentSubmissions[s.username.toLowerCase()]) isPresent = true;
+    if (s.discordId && presentSubmissions[s.discordId]) isPresent = true;
 
     var status = 'A';
     var pts = -1;
@@ -1440,7 +742,7 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
       status = 'P';
       pts = 1;
       presentCount++;
-    } else if (approvedLeaves.has(s.discordId)) {
+    } else if (approvedLeaves[s.discordId]) {
       status = 'L';
       pts = 0;
       leaveCount++;
@@ -1459,7 +761,6 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
     });
   });
 
-  // 5. Update Attendance matrix tab
   recordAttendanceSession(ss, { date: targetDate, records: attendanceRecords });
 
   return {
@@ -1474,9 +775,7 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
 }
 
 /**
- * -------------------------------------------------------------------------
- * 11b. Morning Attendance Point Scanner (+1 Present, -1 Absent, 0 Leave)
- * -------------------------------------------------------------------------
+ * Morning Attendance Scanner (+1 Present, -1 Absent, 0 Leave)
  */
 function scanMorningAttendanceFromForm(ss, dateStr) {
   var targetDate = dateStr || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
@@ -1493,7 +792,7 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
     return { error: "Required sheets (Bot_Map / Attendance) not found" };
   }
 
-  // 1. Get all active students from Bot_Map
+  // 1. Get active students
   var botMapValues = botMapSheet.getDataRange().getValues();
   var students = [];
   for (var i = 1; i < botMapValues.length; i++) {
@@ -1508,8 +807,8 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
     }
   }
 
-  // 2. Read approved leaves for this date
-  var approvedLeaves = new Set();
+  // 2. Approved leaves
+  var approvedLeaves = {};
   if (leaveSheet && leaveSheet.getLastRow() > 1) {
     var leaveValues = leaveSheet.getDataRange().getValues();
     for (var l = 1; l < leaveValues.length; l++) {
@@ -1520,14 +819,14 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
 
       if (lStatus === 'approved' && lDiscordId) {
         if (targetDate >= lStart && targetDate <= lEnd) {
-          approvedLeaves.add(lDiscordId);
+          approvedLeaves[lDiscordId] = true;
         }
       }
     }
   }
 
-  // 3. Scan Morning Form responses for target date
-  var presentSubmissions = new Set();
+  // 3. Scan Morning Form responses
+  var presentSubmissions = {};
   if (formSheet && formSheet.getLastRow() > 1) {
     var formValues = formSheet.getDataRange().getValues();
     for (var f = 1; f < formValues.length; f++) {
@@ -1544,14 +843,14 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
         for (var c = 0; c < row.length; c++) {
           var cellVal = String(row[c] || "").toLowerCase().trim().replace(/^@/, '');
           if (cellVal) {
-            presentSubmissions.add(cellVal);
+            presentSubmissions[cellVal] = true;
           }
         }
       }
     }
   }
 
-  // 4. Determine status and points for every active student
+  // 4. Calculate status
   var presentCount = 0;
   var absentCount = 0;
   var leaveCount = 0;
@@ -1559,9 +858,9 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
 
   students.forEach(function(s) {
     var isPresent = false;
-    if (s.email && presentSubmissions.has(s.email.toLowerCase())) isPresent = true;
-    if (s.username && presentSubmissions.has(s.username.toLowerCase())) isPresent = true;
-    if (s.discordId && presentSubmissions.has(s.discordId)) isPresent = true;
+    if (s.email && presentSubmissions[s.email.toLowerCase()]) isPresent = true;
+    if (s.username && presentSubmissions[s.username.toLowerCase()]) isPresent = true;
+    if (s.discordId && presentSubmissions[s.discordId]) isPresent = true;
 
     var status = 'A';
     var pts = -1;
@@ -1570,7 +869,7 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
       status = 'P';
       pts = 1;
       presentCount++;
-    } else if (approvedLeaves.has(s.discordId)) {
+    } else if (approvedLeaves[s.discordId]) {
       status = 'L';
       pts = 0;
       leaveCount++;
@@ -1589,7 +888,6 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
     });
   });
 
-  // 5. Update Attendance matrix tab with Morning header
   recordAttendanceSession(ss, { date: colDate, records: attendanceRecords });
 
   return {
@@ -1607,7 +905,231 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
 
 /**
  * -------------------------------------------------------------------------
- * 12. Job Task Lifecycle Engine (+1 Announced, +1 Approved, -2 Deadline Penalty)
+ * 6. Leave Requests & Management
+ * -------------------------------------------------------------------------
+ */
+function submitLeaveRequest(ss, data) {
+  var sheet = ss.getSheetByName("Leave_Requests");
+  if (!sheet) return { error: "Leave_Requests sheet not found" };
+
+  var reqId = "LR-" + Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyyMMdd") + "-" + Utilities.getUuid().substring(0, 4).toUpperCase();
+  var timestamp = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+
+  sheet.appendRow([
+    reqId,
+    timestamp,
+    data.discordId || "",
+    data.name || "",
+    data.email || "",
+    data.startDate || "",
+    data.endDate || "",
+    data.reason || "",
+    "Pending",
+    ""
+  ]);
+
+  return { status: "SUCCESS", requestId: reqId };
+}
+
+function updateLeaveRequest(ss, data) {
+  var sheet = ss.getSheetByName("Leave_Requests");
+  if (!sheet) return { error: "Leave_Requests sheet not found" };
+
+  var values = sheet.getDataRange().getValues();
+  var targetRow = -1;
+
+  for (var i = 1; i < values.length; i++) {
+    if (String(values[i][0]).trim() === String(data.requestId).trim()) {
+      targetRow = i + 1;
+      break;
+    }
+  }
+
+  if (targetRow > 0) {
+    sheet.getRange(targetRow, 9).setValue(data.status); // Status
+    if (data.note) sheet.getRange(targetRow, 10).setValue(data.note);
+    return { status: "SUCCESS", requestId: data.requestId, updatedStatus: data.status };
+  }
+
+  return { error: "Leave request not found" };
+}
+
+function getLeavesList(ss, statusFilter) {
+  var sheet = ss.getSheetByName("Leave_Requests");
+  if (!sheet || sheet.getLastRow() <= 1) return { leaves: [] };
+
+  var values = sheet.getDataRange().getValues();
+  var leaves = [];
+
+  for (var i = 1; i < values.length; i++) {
+    var row = values[i];
+    var item = {
+      requestId: String(row[0]),
+      timestamp: String(row[1]),
+      discordId: String(row[2]),
+      name: String(row[3]),
+      email: String(row[4]),
+      startDate: String(row[5]),
+      endDate: String(row[6]),
+      reason: String(row[7]),
+      status: String(row[8]),
+      note: String(row[9])
+    };
+
+    if (!statusFilter || item.status.toLowerCase() === statusFilter.toLowerCase()) {
+      leaves.push(item);
+    }
+  }
+
+  return { leaves: leaves };
+}
+
+/**
+ * -------------------------------------------------------------------------
+ * 7. Job Sheet URLs & Daily Job Scraping Ledgers
+ * -------------------------------------------------------------------------
+ */
+function recordJobSheetUrl(ss, data) {
+  var sheet = ss.getSheetByName("Job_Sheets");
+  if (!sheet) return { error: "Job_Sheets sheet not found" };
+
+  var values = sheet.getDataRange().getValues();
+  var dId = String(data.discordId || "").trim();
+  var targetRow = -1;
+
+  for (var i = 1; i < values.length; i++) {
+    if (String(values[i][0]).trim() === dId) {
+      targetRow = i + 1;
+      break;
+    }
+  }
+
+  var now = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+
+  if (targetRow > 0) {
+    sheet.getRange(targetRow, 4).setValue(data.sheetUrl || "");
+    sheet.getRange(targetRow, 5).setValue(data.sheetId || "");
+    sheet.getRange(targetRow, 6).setValue(data.gid || "");
+    sheet.getRange(targetRow, 7).setValue("Active");
+    sheet.getRange(targetRow, 8).setValue(now);
+    return { status: "UPDATED", row: targetRow };
+  } else {
+    sheet.appendRow([
+      dId,
+      data.name || "",
+      data.email || "",
+      data.sheetUrl || "",
+      data.sheetId || "",
+      data.gid || "",
+      "Active",
+      now
+    ]);
+    return { status: "CREATED", row: sheet.getLastRow() };
+  }
+}
+
+function recordJobDailyEntry(ss, data) {
+  var sheet = ss.getSheetByName("Jobs_Daily");
+  if (!sheet) return { error: "Jobs_Daily sheet not found" };
+
+  var dateStr = data.date || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
+
+  sheet.appendRow([
+    dateStr,
+    data.email || "",
+    data.count || 0,
+    data.name || "",
+    data.discordId || "",
+    data.totalRows || data.count || 0,
+    data.newRows || data.count || 0,
+    data.points || 0
+  ]);
+
+  return { status: "SUCCESS", date: dateStr };
+}
+
+function getJobsDailyHistory(ss, days) {
+  var sheet = ss.getSheetByName("Jobs_Daily");
+  if (!sheet || sheet.getLastRow() <= 1) return { jobs: [] };
+
+  var values = sheet.getDataRange().getValues();
+  var jobs = [];
+
+  for (var i = 1; i < values.length; i++) {
+    var row = values[i];
+    jobs.push({
+      date: String(row[0]),
+      email: String(row[1]),
+      count: Number(row[2]) || 0,
+      name: String(row[3]),
+      discordId: String(row[4]),
+      totalRows: Number(row[5]) || 0,
+      newRows: Number(row[6]) || 0,
+      points: Number(row[7]) || 0
+    });
+  }
+
+  return { jobs: jobs };
+}
+
+/**
+ * -------------------------------------------------------------------------
+ * 8. Interview Preparation Logs (+5 Points)
+ * -------------------------------------------------------------------------
+ */
+function recordInterviewEntry(ss, data) {
+  var sheet = ss.getSheetByName("Interview_Log");
+  if (!sheet) {
+    setupAllRequiredSheets(ss);
+    sheet = ss.getSheetByName("Interview_Log");
+  }
+
+  var now = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+  var loggedDate = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
+
+  sheet.appendRow([
+    loggedDate,
+    data.name || "",
+    data.discordId || "",
+    data.company || "Company",
+    data.serial || 1,
+    data.interviewDate || loggedDate,
+    data.roleDetails || "",
+    data.discordLink || "",
+    now
+  ]);
+
+  return { status: "SUCCESS", pointsAwarded: 5 };
+}
+
+function getInterviewsHistory(ss, days) {
+  var sheet = ss.getSheetByName("Interview_Log");
+  if (!sheet || sheet.getLastRow() <= 1) return { interviews: [] };
+
+  var values = sheet.getDataRange().getValues();
+  var interviews = [];
+
+  for (var i = 1; i < values.length; i++) {
+    var row = values[i];
+    interviews.push({
+      loggedDate: String(row[0]),
+      name: String(row[1]),
+      discordId: String(row[2]),
+      company: String(row[3]),
+      serial: Number(row[4]) || 1,
+      interviewDate: String(row[5]),
+      roleDetails: String(row[6]),
+      discordLink: String(row[7]),
+      timestamp: String(row[8])
+    });
+  }
+
+  return { interviews: interviews };
+}
+
+/**
+ * -------------------------------------------------------------------------
+ * 9. Job Task Lifecycle Engine (+1 Announced, +1 Approved, -2 Deadline Penalty)
  * -------------------------------------------------------------------------
  */
 function recordJobTaskEntry(ss, data) {
@@ -1664,7 +1186,7 @@ function submitJobTaskEntry(ss, data) {
 
   if (targetRow > 0) {
     var timestamp = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
-    sheet.getRange(targetRow, 9).setValue("Submitted"); // Submission Status
+    sheet.getRange(targetRow, 9).setValue("Submitted");
     sheet.getRange(targetRow, 10).setValue(data.githubUrl || "");
     sheet.getRange(targetRow, 11).setValue(data.taskUrl || "");
     sheet.getRange(targetRow, 12).setValue(data.descriptionUrl || "");
@@ -1681,7 +1203,7 @@ function reviewJobTaskEntry(ss, data) {
 
   var values = sheet.getDataRange().getValues();
   var taskId = String(data.taskId || "").trim();
-  var mentorStatus = data.status || "Approved"; // Approved or Rejected
+  var mentorStatus = data.status || "Approved";
   var mentorNote = data.note || "";
   var targetRow = -1;
   var currentPoints = 1;
