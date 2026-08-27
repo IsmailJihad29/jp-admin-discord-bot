@@ -75,13 +75,19 @@ class ScoringService {
       });
     });
 
+    const scoringStartDate = scoring.scoringStartDate || "2026-08-30";
+
     // 1. Daily & Morning Attendance Points (Present, Absent, Leave)
     const attRows = attendanceRes.rows || attendanceRes.attendance || [];
     attRows.forEach(att => {
       const student = studentMap.get(att.discordId);
       if (student) {
         if (att.sessions && typeof att.sessions === 'object') {
-          Object.values(att.sessions).forEach(mark => {
+          Object.entries(att.sessions).forEach(([sessionDate, mark]) => {
+            // Only count attendance from scoringStartDate onwards
+            const datePart = sessionDate.substring(0, 10);
+            if (datePart < scoringStartDate) return;
+
             const m = String(mark || "").toUpperCase().trim();
             if (m === 'P' || m === 'PRESENT' || m.startsWith('P')) {
               student.attendancePoints += scoring.attendancePresent;
@@ -100,6 +106,9 @@ class ScoringService {
     // 2. Job Application Tiered Scoring & Streaks
     const jobsByStudent = new Map();
     (jobsRes.jobs || []).forEach(j => {
+      // Filter by scoringStartDate
+      if (j.date && j.date < scoringStartDate) return;
+
       if (!jobsByStudent.has(j.discordId)) {
         jobsByStudent.set(j.discordId, []);
       }
@@ -126,8 +135,10 @@ class ScoringService {
       student.streakBonus = Math.min(consecutiveDays * scoring.streakBonusPerDay, scoring.streakCap);
     });
 
-    // 3. Interview Points
+    // 3. Interview Points (+2 pts)
     (interviewsRes.interviews || []).forEach(item => {
+      if (item.date && item.date < scoringStartDate) return;
+
       const student = studentMap.get(item.discordId);
       if (student) {
         student.interviewCount += 1;
@@ -137,6 +148,8 @@ class ScoringService {
 
     // 4. Job Task Points
     (tasksRes.tasks || []).forEach(task => {
+      if (task.createdAt && task.createdAt < scoringStartDate) return;
+
       const student = studentMap.get(task.discordId);
       if (student) {
         student.taskCount += 1;

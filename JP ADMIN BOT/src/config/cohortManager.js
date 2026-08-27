@@ -190,7 +190,8 @@ class CohortManager {
       taskOverduePenalty: cohort?.scoring?.taskOverduePenalty ?? -2,
       jobTarget: cohort?.targets?.applications ?? constants.SCORING.DEFAULT_JOB_TARGET,
       streakBonusPerDay: cohort?.scoring?.streakBonusPerDay ?? constants.SCORING.STREAK_BONUS_PER_DAY,
-      streakCap: cohort?.scoring?.streakCap ?? constants.SCORING.STREAK_CAP
+      streakCap: cohort?.scoring?.streakCap ?? constants.SCORING.STREAK_CAP,
+      scoringStartDate: cohort?.scoringStartDate || "2026-08-30" // Next Sunday default reset date
     };
   }
 
@@ -201,13 +202,29 @@ class CohortManager {
       cohort.targets = cohort.targets || {};
       cohort.targets.applications = Number(updates.jobTarget);
     }
+    if (updates.scoringStartDate !== undefined) {
+      cohort.scoringStartDate = updates.scoringStartDate;
+    }
     this.saveToDisk();
     return this.getCohortScoring(guildId);
   }
 
-  resetCohortScoring(guildId) {
+  setScoringStartDate(guildId, dateStr) {
+    const cohort = this.getCohort(guildId);
+    cohort.scoringStartDate = dateStr;
+    this.saveToDisk();
+    return cohort.scoringStartDate;
+  }
+
+  getScoringStartDate(guildId) {
+    const cohort = this.getCohort(guildId);
+    return cohort?.scoringStartDate || "2026-08-30";
+  }
+
+  resetCohortScoring(guildId, newStartDate = "2026-08-30") {
     const cohort = this.getCohort(guildId);
     delete cohort.scoring;
+    cohort.scoringStartDate = newStartDate;
     if (cohort.targets) cohort.targets.applications = constants.SCORING.DEFAULT_JOB_TARGET;
     this.saveToDisk();
     return this.getCohortScoring(guildId);

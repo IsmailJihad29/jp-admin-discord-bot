@@ -1,4 +1,4 @@
-# 📚 JP ADMIN BOT (v3.30) — পূর্ণাঙ্গ কমান্ড রেফারেন্স ম্যানুয়াল
+# 📚 JP ADMIN BOT — পূর্ণাঙ্গ কমান্ড রেফারেন্স ম্যানুয়াল
 
 ---
 
@@ -9,6 +9,8 @@
 | **`!setgas`** | `!gasurl`, `!gas` | Supervisor | `#jp-admin` | `!setgas <Web_App_URL>`<br>*Ex:* `!setgas https://script.google.com/macros/s/.../exec` | ডিসকর্ড সার্ভারের সাথে গুগল শিটের Google Apps Script (v50) ব্যাকএন্ড লিংক ও কানেক্ট করে। |
 | **`!setupserver`** | `!scanserver`, `!checkperms`, `!setup` | Supervisor | `#jp-admin` | `!setupserver` | পুরো সার্ভার স্ক্যান করে স্বয়ংক্রিয়ভাবে ক্যাটাগরি, রোল (`Supervisor`, `Mentor`, `Active Student`, `Hired`, `Referral Restricted`) এবং ১০+ চ্যানেল পারমিশন তৈরি ও মেরামত করে। |
 | **`!setchannel`** | `!customchannel`, `!channel` | Supervisor | `#jp-admin` | `!setchannel <KEY> <#channel>`<br>*Ex:* `!setchannel ATTENDANCE #daily-attendance` | কোনো ফিচারের জন্য কাস্টম চ্যানেল নির্ধারণ করে (যেমন: `ATTENDANCE`, `RTBR`, `HEALTH_CHECK`, `JOB_TRACKING`, `LEAVE_REQUEST`, `JOB_TASK`)। |
+| **`!catchup`** | `!scanpending`, `!backlog`, `!processpending` | Supervisor | `#jp-admin` | `!catchup [hours]`<br>*Ex:* `!catchup 24` | বট অফলাইনে থাকা অবস্থায় মেম্বারদের দেওয়া সব পেন্ডিং কমান্ড, ইন্টারভিউ পোস্ট, জব টাস্ক এবং শিট লিংক স্বয়ংক্রিয়ভাবে স্ক্যান করে এক্সিকিউট করে। |
+| **`!syncmanual`** | `!commandmanual`, `!createmanualtab`, `!botcommands` | Mentor / Supervisor | `#jp-admin` | `!syncmanual` | গুগল শিটে স্বয়ংক্রিয়ভাবে `Bot_Commands` ট্যাব তৈরি/আপডেট করে সম্পূর্ণ কমান্ড ম্যানুয়াল সিনক্রোনাইজ করে। |
 | **`!supervisor`** | `!supervisors`, `!admin` | Owner / Supervisor | `#jp-admin` | `!supervisor <add/remove> @user`<br>*Ex:* `!supervisor add @John` | কোনো মেম্বারকে কোহোর্ট সুপারভাইজার বা অ্যাডমিনিস্ট্রেটর হিসেবে রেজিস্টার বা রিমুভ করে। |
 | **`!cohorts`** | `!cohort` | Supervisor | `#jp-admin` | `!cohorts` | সার্ভারের বর্তমান কোহোর্ট কনফিগারেশন, শিট কানেকশন, টাইমজোন এবং অটোমেশন স্টেটাস প্রদর্শন করে। |
 | **`!settrackertemplate`** | `!trackertemplate` | Supervisor / Mentor | `#jp-admin` | `!settrackertemplate <Google_Sheet_URL>`<br>*Ex:* `!settrackertemplate https://docs.google.com/spreadsheets/d/.../copy` | শিক্ষার্থীদের কপি করার জন্য অফিশিয়াল ডেমো জব ট্র্যাকার গুগল শিটের লিংক বটের মেমরিতে সেট করে। |
@@ -19,23 +21,28 @@
 
 | কমান্ডের নাম (Command) | বিকল্প নাম (Aliases) | অনুমতি (Role) | অনুমোদিত চ্যানেল (Channel) | সিনট্যাক্স ও উদাহরণ (Syntax & Example) | কাজের বিস্তারিত বিবরণ (Description) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`!points`** | `!scoring`, `!pointsettings` | Mentor / Supervisor | `#jp-admin` | `!points` | সার্ভারে সক্রিয় সকল পয়েন্টের মান (ইন্টারভিউ, উপস্থিতি, অনুপস্থিতি, ডেইলি টার্গেট, স্ট্রিক, টাস্ক) একটি এম্বেডে প্রদর্শন করে। |
-| **`!setpoint interview`** | `!setpoint int` | Mentor / Supervisor | `#jp-admin` | `!setpoint interview <points>`<br>*Ex:* `!setpoint interview 10` | প্রতিটি ইন্টারভিউ লগ করার জন্য কত পয়েন্ট দেওয়া হবে তা কাস্টমাইজ করে (ডিফল্ট: ৫ পয়েন্ট)। |
-| **`!setpoint attendance`** | `!setpoint att` | Mentor / Supervisor | `#jp-admin` | `!setpoint attendance <present_pts> [absent_pts]`<br>*Ex:* `!setpoint attendance 2 -2` | উপস্থিত (+Present) এবং অনুপস্থিত (-Absent) থাকার পয়েন্ট ইচ্ছামতো পরিবর্তন করে। |
-| **`!setpoint target`** | `!setpoint jobtarget` | Mentor / Supervisor | `#jp-admin` | `!setpoint target <count>`<br>*Ex:* `!setpoint target 12` | শিক্ষার্থীদের প্রতিদিনের বাধ্যতামূলক জব অ্যাপ্লিকেশনের দৈনিক টার্গেট সেট করে (ডিফল্ট: ১০টি)। |
-| **`!setpoint streak`** | `!setpoint streaks` | Mentor / Supervisor | `#jp-admin` | `!setpoint streak <bonus_per_day> [max_cap]`<br>*Ex:* `!setpoint streak 4 20` | টানা দিন টার্গেট পূরণের জন্য দৈনিক স্ট্রিক বোনাস এবং সর্বোচ্চ ক্যাপ নির্ধারণ করে। |
-| **`!setpoint task`** | `!setpoint tasks` | Mentor / Supervisor | `#jp-admin` | `!setpoint task <announced> <approved> [overdue]`<br>*Ex:* `!setpoint task 1 2 -2` | কোম্পানির কোডিং টাস্ক অ্যানাউন্স (+১), মেন্টর অ্যাপ্রুভাল (+১) এবং ডেডলাইন মিসের পেনাল্টি (-২) পয়েন্ট সেট করে। |
+| **`!points`** | `!scoring`, `!pointsettings` | Mentor / Supervisor | `#jp-admin` | `!points` | সার্ভারে সক্রিয় সকল পয়েন্টের মান (ইন্টারভিউ: +২, উপস্থিতি: +১/-১/০, ডেইলি টার্গেট: ১০, স্ট্রিক, টাস্ক) একটি এম্বেডে প্রদর্শন করে। |
+| **`!resetscores`** | `!resetpoints`, `!startweek`, `!setstartdate` | Supervisor | `#jp-admin` | `!resetscores [YYYY-MM-DD]`<br>*Ex:* `!resetscores 2026-08-30` | সকল শিক্ষার্থীর বর্তমান স্কোর রিসেট করে এবং পরবর্তী রবিবার (Sunday) থেকে নতুন সপ্তাহের স্কোর গণনা শিডিউল করে। |
+| **`!settarget`** | `!target`, `!jobtarget`, `!dailytarget` | Mentor / Supervisor | `#jp-admin` | `!settarget <count>`<br>*Ex:* `!settarget 12` | শিক্ষার্থীদের প্রতিদিনের বাধ্যতামূলক জব অ্যাপ্লিকেশনের দৈনিক টার্গেট কাস্টমাইজ করে। |
+| **`!setpoint interview`** | `!setpoint int` | Mentor / Supervisor | `#jp-admin` | `!setpoint interview <points>`<br>*Ex:* `!setpoint interview 2` | প্রতিটি ইন্টারভিউ লগ করার জন্য পয়েন্ট কাস্টমাইজ করে (ডিফল্ট: **+২ পয়েন্ট**)। |
+| **`!setpoint attendance`** | `!setpoint att` | Mentor / Supervisor | `#jp-admin` | `!setpoint attendance <present_pts> [absent_pts]`<br>*Ex:* `!setpoint attendance 1 -1` | উপস্থিত (+Present) এবং অনুপস্থিত (-Absent) থাকার পয়েন্ট পরিবর্তন করে। |
+| **`!setpoint target`** | `!setpoint jobtarget` | Mentor / Supervisor | `#jp-admin` | `!setpoint target <count>`<br>*Ex:* `!setpoint target 15` | দৈনিক অ্যাপ্লিকেশন টার্গেট কাস্টমাইজ করে। |
+| **`!setpoint streak`** | `!setpoint streaks` | Mentor / Supervisor | `#jp-admin` | `!setpoint streak <bonus_per_day> [max_cap]`<br>*Ex:* `!setpoint streak 3 15` | টানা দিন টার্গেট পূরণের জন্য দৈনিক স্ট্রিক বোনাস এবং সর্বোচ্চ ক্যাপ নির্ধারণ করে। |
+| **`!setpoint task`** | `!setpoint tasks` | Mentor / Supervisor | `#jp-admin` | `!setpoint task <announced> <approved> [overdue]`<br>*Ex:* `!setpoint task 1 1 -2` | কোম্পানির কোডিং টাস্ক অ্যানাউন্স (+১), মেন্টর অ্যাপ্রুভাল (+১) এবং ডেডলাইন মিসের পেনাল্টি (-২) পয়েন্ট সেট করে। |
 | **`!setpoint reset`** | `!setpoint default` | Mentor / Supervisor | `#jp-admin` | `!setpoint reset` | সকল পয়েন্ট ও স্কোরিং রুলস আগের স্ট্যান্ডার্ড ফ্যাক্টরি ডিফল্ট মানে রিসেট করে। |
 
 ---
 
 ## 📅 ৩. উপস্থিতি ও অ্যাটেন্ডেন্স ম্যানেজমেন্ট (Attendance Operations)
+> 🗓️ **সাপ্তাহিক রুটিন:** রবি থেকে বৃহস্পতিবার (Sunday to Thursday)
 
 | কমান্ডের নাম (Command) | বিকল্প নাম (Aliases) | অনুমতি (Role) | অনুমোদিত চ্যানেল (Channel) | সিনট্যাক্স ও উদাহরণ (Syntax & Example) | কাজের বিস্তারিত বিবরণ (Description) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`!morningattendance`** | `!morningatt` | Mentor / Supervisor | `#jp-admin` | `!morningattendance [YYYY-MM-DD]`<br>*Ex:* `!morningattendance 2026-08-27` | গুগল ফর্মের **`Morning Attendance`** ট্যাব স্ক্যান করে উপস্থিত (+১), অনুপস্থিত (-১), ছুটি (০) হিসাব করে রিপোর্ট `#daily-attendance`-এ প্রকাশ করে এবং `#jp-admin`-এ রিসিপ্ট দেয়। |
 | **`!checkattendance`** | `!attendance`, `!att` | Mentor / Supervisor | `#jp-admin` | `!checkattendance [YYYY-MM-DD]`<br>*Ex:* `!checkattendance` | গুগল ফর্মের **`Daily Attendance`** ট্যাব স্ক্যান করে স্কোর আপডেট করে এবং রিপোর্ট `#daily-attendance` চ্যানেলে প্রকাশ করে। |
-| **`!customattendance`** | `!scanfromtab`, `!customatt` | Mentor / Supervisor | `#jp-admin` | `!customattendance "<Tab Name>" [YYYY-MM-DD] [Label]`<br>*Ex:* `!customattendance "Special Workshop"` | নিয়মিত ফর্মের বদলে অন্য যেকোনো **কাস্টম গুগল শিট ট্যাব** থেকে ওই দিনের জন্য অ্যাটেন্ডেন্স স্ক্যান করে পয়েন্ট প্রদান করে। |
+| **`!customattendance`** | `!scanfromtab`, `!customscan` | Mentor / Supervisor | `#jp-admin` | `!customattendance "<Tab Name>" [YYYY-MM-DD] [Label]`<br>*Ex:* `!customattendance "Special Workshop"` | নিয়মিত ফর্মের বদলে অন্য যেকোনো **কাস্টম গুগল শিট ট্যাব** থেকে তাৎক্ষণিকভাবে অ্যাটেন্ডেন্স স্ক্যান করে পয়েন্ট প্রদান করে। |
+| **`!customattendance schedule`** | `!schedulecustom`, `!queueattendance` | Mentor / Supervisor | `#jp-admin` | `!customattendance schedule "<Tab Name>"`<br>*Ex:* `!customattendance schedule "Townhall"` | কাস্টম ট্যাব আগে থেকেই কিউ-তে শিডিউল করে রাখে এবং **রাত ১১:৩০ টায় (23:30)** স্বয়ংক্রিয়ভাবে স্ক্যান করে চ্যানেলে রিপোর্ট দেয়। |
+| **`!customattendance list`** | `!customattendance queue` | Mentor / Supervisor | `#jp-admin` | `!customattendance list` | আজ রাত ১১:৩০ এর জন্য কোন কোন কাস্টম শিট কিউ-তে আছে তার তালিকা প্রদর্শন করে। |
 | **`!repairattendance`** | `!fixattendance`, `!repairroster` | Mentor / Supervisor | `#jp-admin` | `!repairattendance` | গুগল শিটের `Attendance` ম্যাট্রিক্স স্ক্যান করে অনুপস্থিত শিক্ষার্থীদের নাম ও ইমেইল সিঙ্ক করে এবং নষ্ট হওয়া ফরম্যাট ঠিক করে। |
 | **`!absent`** | `!absentees`, `!absentstudents` | Mentor / Supervisor | `#jp-admin` | `!absent [YYYY-MM-DD]`<br>*Ex:* `!absent` | নির্দিষ্ট তারিখে কারা কারা ক্লাসে বা মিটিংয়ে অনুপস্থিত ছিল তাদের তালিকা বের করে। |
 
@@ -45,10 +52,10 @@
 
 | কমান্ডের নাম (Command) | বিকল্প নাম (Aliases) | অনুমতি (Role) | অনুমোদিত চ্যানেল (Channel) | সিনট্যাক্স ও উদাহরণ (Syntax & Example) | কাজের বিস্তারিত বিবরণ (Description) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`!leave`** | `!applyleave`, `!requestleave` | Student / Staff | **`#leave-request`** | `!leave` | শিক্ষার্থীদের ছুটির আবেদন করার জন্য একটি ইন্টারেক্টিভ পপআপ মডাল ওপেন করে। |
-| **`!leaves`** | `!allleaves`, `!listleaves` | Mentor / Supervisor | `#jp-admin` | `!leaves [pending / approved / rejected]`<br>*Ex:* `!leaves pending` | শিক্ষার্থীদের জমা দেওয়া সকল ছুটির আবেদন **[Approve]** ও **[Reject]** বাটন সহ প্রদর্শন করে। |
-| **`!approve`** | `!acceptleave` | Mentor / Supervisor | `#jp-admin` | `!approve <Request_ID>`<br>*Ex:* `!approve LR-20260827-A1B2` | নির্দিষ্ট ছুটির আবেদন মঞ্জুর করে (অনুমোদিত দিনে অ্যাটেন্ডেন্সে কোনো মাইনাস হবে না, ০ পয়েন্ট থাকবে)। |
-| **`!reject`** | `!denyleave`, `!deny` | Mentor / Supervisor | `#jp-admin` | `!reject <Request_ID>`<br>*Ex:* `!reject LR-20260827-A1B2` | নির্দিষ্ট ছুটির আবেদন বাতিল করে। |
+| **`!leave`** | `!applyleave`, `!requestleave` | Student / Staff | **`#leave-request`** | `!leave [StartDate] [EndDate] <Reason>`<br>*Ex:* `!leave 2026-08-27 2026-08-28 Sickness`<br>*তারিখ ছাড়া:* `!leave Fever and rest` | ছুটির আবেদন সাবমিট করে। তারিখ না দিলে পোস্টের দিনটি গণ্য হবে। আবেদনকারী তাৎক্ষণিক **Under Review** নোটিফিকেশন পাবে। |
+| **`!leaves`** | `!allleaves`, `!leaves pending` | Mentor / Supervisor | `#jp-admin` | `!leaves [pending / approved / rejected / all]`<br>*Ex:* `!leaves pending` | শিক্ষার্থীদের জমা দেওয়া সকল ছুটির আবেদন **[Approve]** ও **[Reject]** বাটন সহ প্রদর্শন করে। |
+| **`!approve`** | `!acceptleave` | Mentor / Supervisor | `#jp-admin` | `!approve <Request_ID>`<br>*Ex:* `!approve LR-20260827-A1B2` | নির্দিষ্ট ছুটির আবেদন মঞ্জুর করে এবং শিক্ষার্থীকে সরাসরি Discord DM-এ নোটিফিকেশন পাঠায়। |
+| **`!reject`** | `!denyleave`, `!deny` | Mentor / Supervisor | `#jp-admin` | `!reject <Request_ID>`<br>*Ex:* `!reject LR-20260827-A1B2` | নির্দিষ্ট ছুটির আবেদন বাতিল করে এবং শিক্ষার্থীকে DM-এ নোটিফিকেশন পাঠায়। |
 | **`!offday today`** | `!holiday today`, `!break` | Mentor / Supervisor | `#jp-admin` | `!offday today [ছুটির কারণ]`<br>*Ex:* `!offday today Govt Holiday` | আজকের দিনটিকে অফডে ঘোষণা করে `#announcements`-এ নোটিশ দেয় এবং রাত ১১:৩০ এর জব অডিট ও অ্যাবসেন্ট পেনাল্টি বন্ধ রাখে। |
 | **`!offday <Range>`** | `!holiday <Range>` | Mentor / Supervisor | `#jp-admin` | `!offday YYYY-MM-DD to YYYY-MM-DD [কারণ]`<br>*Ex:* `!offday 2026-08-28 to 2026-08-30 Eid Vacation` | টানা কয়েকদিনের ছুটি শিডিউল করে, গুগল শিটের `Holidays` ট্যাবে সেভ করে এবং এই দিনগুলোতে পেনাল্টি পজ রাখে। |
 | **`!offdays`** | `!holidays`, `!listholidays` | Mentor / Supervisor | `#jp-admin` | `!offdays` | সার্ভারে শিডিউল করা সকল সক্রিয় ও ভবিষ্যৎ ছুটির ক্যালেন্ডার প্রদর্শন করে। |
@@ -91,7 +98,8 @@
 
 | কমান্ডের নাম (Command) | বিকল্প নাম (Aliases) | অনুমতি (Role) | অনুমোদিত চ্যানেল (Channel) | সিনট্যাক্স ও উদাহরণ (Syntax & Example) | কাজের বিস্তারিত বিবরণ (Description) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`!posttemplates`** | `!guidelines`, `!formatguidelines`, `!templates` | Mentor / Supervisor | `#jp-admin` | `!posttemplates` *(বা `!posttemplates interview / task / tracker / all`)* | শিক্ষার্থীদের চ্যানেলে স্ট্যান্ডার্ড পোস্ট ফরম্যাট পাঠায় (ইন্টারেক্টিভ বাটন হাব ওপেন হয় যাতে বেছে বেছে পোস্ট করা যায়)। |
+| **`!posttemplates`** | `!guidelines`, `!formatguidelines`, `!templates` | Mentor / Supervisor | `#jp-admin` | `!posttemplates` *(বা `!posttemplates interview / task / tracker / leave / all`)* | শিক্ষার্থীদের চ্যানেলে স্ট্যান্ডার্ড পোস্ট ফরম্যাট পাঠায় (ইন্টারেক্টিভ বাটন হাব ওপেন হয় যাতে বেছে বেছে পোস্ট করা যায়)। |
+| **`!posttemplates leave`** | `!postguidelines leave` | Mentor / Supervisor | `#leave-request` | `!posttemplates leave` | `#leave-request` চ্যানেলে স্ট্যান্ডার্ড ছুটির আবেদন গাইডলাইন ও সরাসরি ইন্টারেক্টিভ ফর্ম বাটন পোস্ট করে। |
 | **`!mentor`** | `!giverole`, `!removerole`, `!role` | Supervisor | `#jp-admin` | `!mentor <add/remove> @user`<br>*Ex:* `!mentor add @John` | মেম্বারকে মেন্টর রোল ও পারমিশন প্রদান করে অথবা প্রত্যাহার করে। |
 | **`!doctor`** | `!diagnose`, `!gasdoctor` | Mentor / Supervisor | `#jp-admin` | `!doctor` | বট, ডিসকর্ড এপিআই, গুগল শিটের v50 ব্যাকএন্ড এবং ১১টি ডেটাবেজ ট্যাবের সার্বিক সংযোগ ও স্বাস্থ্য পরীক্ষা করে। |
 | **`!jp`** | `!askjp` | Everyone | Any Channel | `!jp <আপনার প্রশ্ন>`<br>*Ex:* `!jp আমার লিডারবোর্ড স্কোর কীভাবে বাড়াব?` | Google Gemini AI চালিত ন্যাচারাল ল্যাঙ্গুয়েজ অ্যাসিস্ট্যান্ট যা কোহোর্ট সংক্রান্ত যেকোনো প্রশ্নের উত্তর দেয়। |

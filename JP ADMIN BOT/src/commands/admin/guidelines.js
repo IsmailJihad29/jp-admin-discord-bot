@@ -83,7 +83,7 @@ module.exports = {
           "Whenever you have an upcoming interview, please post your update using the template below.\n\n" +
           "✨ **Why this is important:**\n" +
           "• 🤖 **Google Gemini AI** will instantly analyze your role & tech stack and generate a comprehensive **30-Question Master Preparation Guide** (Core Language, Frameworks, System Design & Behavioral)!\n" +
-          "• ⭐ **+5 Points** will be automatically added to your Leaderboard & RTBR score!\n\n" +
+          "• ⭐ **+2 Points** will be automatically added to your Leaderboard & RTBR score!\n\n" +
           "📋 **COPY & PASTE THIS TEMPLATE:**\n" +
           "```text\n" +
           "🏢 Company: [Company Name]\n" +

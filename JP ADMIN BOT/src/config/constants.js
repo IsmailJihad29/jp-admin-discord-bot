@@ -43,8 +43,8 @@ module.exports = {
       EXTRA_BONUS: 1.0   // > 100% of target (+1 bonus, total = 3.0 pts)
     },
 
-    // Interview Prep Feedback (+5 points)
-    INTERVIEW_POINTS: 5,
+    // Interview Prep Feedback (+2 points)
+    INTERVIEW_POINTS: 2,
 
     // Job Task Lifecycle points
     TASK_ANNOUNCED: 1,       // Posted in #job-task-update (+1 pt)

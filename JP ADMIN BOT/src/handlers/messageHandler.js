@@ -81,9 +81,12 @@ class MessageHandler {
       const maxLen = 3800;
       const embeds = [];
 
+      const cohortManager = require('../config/cohortManager');
+      const interviewPts = cohortManager.getCohortScoring(message.guild.id).interviewPoints;
+
       if (aiFeedback.length <= maxLen) {
         embeds.push(Embeds.success(
-          `🎯 Interview Logged (+5 Points!) · 30-Question Master Prep Guide`,
+          `🎯 Interview Logged (+${interviewPts} Points!) · 30-Question Master Prep Guide`,
           aiFeedback
         ));
       } else {
@@ -96,7 +99,7 @@ class MessageHandler {
           if ((currentChunk + '\n' + line).length > maxLen) {
             embeds.push(Embeds.success(
               partIndex === 1
-                ? `🎯 Interview Logged (+5 Points!) · 30-Question Prep (Part 1)`
+                ? `🎯 Interview Logged (+${interviewPts} Points!) · 30-Question Prep (Part 1)`
                 : `🎯 30-Question Prep Guide (Part ${partIndex})`,
               currentChunk
             ));
