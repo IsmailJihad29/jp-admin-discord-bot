@@ -51,6 +51,36 @@ module.exports = {
           reason = args.join(' ');
         }
 
+        // Check if student already has an approved or pending leave for these dates
+        const existingRes = await GasClient.getLeaves(guildId).catch(() => ({ leaves: [] }));
+        const existingList = existingRes.leaves || [];
+        const match = existingList.find(l => 
+          l.discordId === message.author.id && 
+          ((start >= l.startDate && start <= l.endDate) || (l.startDate >= start && l.startDate <= end))
+        );
+
+        if (match) {
+          const status = String(match.status || "").toUpperCase();
+          if (status === 'APPROVED') {
+            return message.reply({
+              embeds: [Embeds.success(
+                "Leave Already Approved! ✅",
+                `Hello <@${message.author.id}>, you already have an **APPROVED** leave request (**\`${match.requestId}\`**) covering **\`${match.startDate}\` to \`${match.endDate}\`**.\n\n` +
+                `• 📝 **Reason on Record:** ${match.reason}\n` +
+                `• ⭐ **Attendance Status:** Excused (\`L\`) with 0 absence penalty.`
+              )]
+            });
+          } else if (status === 'PENDING') {
+            return message.reply({
+              embeds: [Embeds.info(
+                "Leave Request Already In Review ⏳",
+                `Hello <@${message.author.id}>, you already have a pending leave request (**\`${match.requestId}\`**) for **\`${match.startDate}\` to \`${match.endDate}\`** currently in review by mentors.\n\n` +
+                `🔔 *You will receive a notification as soon as it is decided!*`
+              )]
+            });
+          }
+        }
+
         const loadingMsg = await message.reply("⏳ **Submitting your leave request...**");
 
         try {

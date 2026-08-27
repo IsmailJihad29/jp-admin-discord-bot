@@ -115,6 +115,21 @@ class CatchupService {
                 stats.commandsProcessed++;
                 await this.sleep(800);
               } else {
+                // Check if this student already has a recorded leave in database
+                const leavesRes = await GasClient.getLeaves(guild.id).catch(() => ({ leaves: [] }));
+                const leavesList = leavesRes.leaves || [];
+                const existing = leavesList.find(l => l.discordId === message.author.id);
+                if (existing) {
+                  const st = String(existing.status || "").toUpperCase();
+                  if (st === 'APPROVED') {
+                    message.react('✅').catch(() => {});
+                    continue; // Already approved in database, skip re-posting under review
+                  } else if (st === 'PENDING') {
+                    message.react('⏳').catch(() => {});
+                    continue; // Already in review, skip re-posting
+                  }
+                }
+
                 Logger.info(`[CatchupService] Catching up leave request post from ${message.author.tag} in #${channel.name}`);
                 await MessageHandler.handleLeavePost(message);
                 stats.commandsProcessed++;

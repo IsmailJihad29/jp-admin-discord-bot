@@ -123,9 +123,6 @@ class MessageHandler {
         autoArchiveDuration: 1440
       }).catch(() => null);
 
-      const cohortManager = require('../config/cohortManager');
-      const interviewPts = cohortManager.getCohortScoring(message.guild.id).interviewPoints;
-
       if (thread) {
         // Post full guide in thread for organized discussion
         for (const emb of embeds) {
@@ -275,6 +272,38 @@ class MessageHandler {
       } else if (dateMatches.length === 1) {
         start = dateMatches[0];
         end = dateMatches[0];
+      }
+
+      // Check if student already has an approved or pending leave for these dates
+      const existingRes = await GasClient.getLeaves(message.guild.id).catch(() => ({ leaves: [] }));
+      const existingList = existingRes.leaves || [];
+      const match = existingList.find(l => 
+        l.discordId === studentId && 
+        ((start >= l.startDate && start <= l.endDate) || (l.startDate >= start && l.startDate <= end))
+      );
+
+      if (match) {
+        const status = String(match.status || "").toUpperCase();
+        if (status === 'APPROVED') {
+          message.react('✅').catch(() => {});
+          return message.reply({
+            embeds: [Embeds.success(
+              "Leave Already Approved! ✅",
+              `Hello <@${studentId}>, your leave request (**\`${match.requestId}\`**) for **\`${match.startDate}\` to \`${match.endDate}\`** is **ALREADY APPROVED**.\n\n` +
+              `• 📝 **Reason on Record:** ${match.reason}\n` +
+              `• ⭐ **Attendance Status:** Excused (\`L\`) with 0 absence penalty.`
+            )]
+          }).catch(() => {});
+        } else if (status === 'PENDING') {
+          message.react('⏳').catch(() => {});
+          return message.reply({
+            embeds: [Embeds.info(
+              "Leave Request Already In Review ⏳",
+              `Hello <@${studentId}>, your leave request (**\`${match.requestId}\`**) for **\`${match.startDate}\` to \`${match.endDate}\`** is already in review by mentors.\n\n` +
+              `🔔 *You will receive a notification as soon as it is decided!*`
+            )]
+          }).catch(() => {});
+        }
       }
 
       const res = await GasClient.submitLeave(message.guild.id, {
