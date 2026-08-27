@@ -300,31 +300,65 @@ function runDoctorCheck(ss) {
  */
 function getRosterData(ss) {
   var sheet = ss.getSheetByName("Bot_Map");
-  if (!sheet) return { students: [] };
+  var allDataSheet = ss.getSheetByName("All Data");
 
-  var values = sheet.getDataRange().getValues();
-  if (values.length <= 1) return { students: [] };
+  if (!sheet) {
+    setupAllRequiredSheets(ss);
+    sheet = ss.getSheetByName("Bot_Map");
+  }
 
-  var headers = values[0];
+  var values = sheet ? sheet.getDataRange().getValues() : [];
   var students = [];
 
-  for (var i = 1; i < values.length; i++) {
-    var row = values[i];
-    var student = {
-      email: row[0] ? String(row[0]).trim() : "",
-      name: row[1] ? String(row[1]).trim() : "",
-      username: row[2] ? String(row[2]).trim() : "",
-      discordId: row[3] ? String(row[3]).trim() : "",
-      status: row[4] ? String(row[4]).trim().toLowerCase() : "active",
-      region: row[5] ? String(row[5]).trim() : "",
-      subregion: row[6] ? String(row[6]).trim() : "",
-      phone: row[7] ? String(row[7]).trim() : "",
-      matchSource: row[8] ? String(row[8]).trim() : "",
-      reviewNote: row[9] ? String(row[9]).trim() : "",
-      rowIndex: i + 1
-    };
-    if (student.discordId || student.email) {
-      students.push(student);
+  if (values && values.length > 1) {
+    for (var i = 1; i < values.length; i++) {
+      var row = values[i];
+      var student = {
+        email: row[0] ? String(row[0]).trim() : "",
+        name: row[1] ? String(row[1]).trim() : "",
+        username: row[2] ? String(row[2]).trim() : "",
+        discordId: row[3] ? String(row[3]).trim() : "",
+        status: row[4] ? String(row[4]).trim().toLowerCase() : "active",
+        region: row[5] ? String(row[5]).trim() : "",
+        subregion: row[6] ? String(row[6]).trim() : "",
+        phone: row[7] ? String(row[7]).trim() : "",
+        matchSource: row[8] ? String(row[8]).trim() : "",
+        reviewNote: row[9] ? String(row[9]).trim() : "",
+        rowIndex: i + 1
+      };
+      if (student.discordId || student.email || student.name) {
+        students.push(student);
+      }
+    }
+  }
+
+  // Fallback / Initial load from 'All Data' master tab if Bot_Map is currently empty
+  if (students.length === 0 && allDataSheet && allDataSheet.getLastRow() > 1) {
+    var allDataRows = allDataSheet.getDataRange().getValues();
+    for (var k = 1; k < allDataRows.length; k++) {
+      var aRow = allDataRows[k];
+      var aName = String(aRow[0] || "").trim();
+      var aEmail = String(aRow[1] || "").trim();
+      var aPhone = String(aRow[2] || "").trim();
+      var aUsername = String(aRow[3] || "").trim();
+      var aRegion = String(aRow[4] || "").trim();
+      var aSubregion = String(aRow[5] || "").trim();
+
+      if (aName || aEmail || aUsername) {
+        students.push({
+          email: aEmail,
+          name: aName,
+          username: aUsername,
+          discordId: "",
+          status: "active",
+          region: aRegion,
+          subregion: aSubregion,
+          phone: aPhone,
+          matchSource: "All Data Master",
+          reviewNote: "",
+          rowIndex: k + 1
+        });
+      }
     }
   }
 
@@ -339,7 +373,8 @@ function syncRosterData(ss, discordMembers) {
   botMapSheet = ss.getSheetByName("Bot_Map");
   allDataSheet = ss.getSheetByName("All Data");
 
-  var allDataMap = {};
+  // 1. Read master student records from 'All Data' tab
+  var allDataStudents = [];
   if (allDataSheet && allDataSheet.getLastRow() > 1) {
     var allDataRows = allDataSheet.getDataRange().getValues();
     for (var i = 1; i < allDataRows.length; i++) {
@@ -351,78 +386,165 @@ function syncRosterData(ss, discordMembers) {
       var region = String(row[4] || "").trim();
       var subregion = String(row[5] || "").trim();
 
-      var obj = {
-        name: name,
-        email: email,
-        phone: phone,
-        username: uName,
-        region: region,
-        subregion: subregion
-      };
-      if (email) allDataMap["email:" + email.toLowerCase()] = obj;
-      if (uName) allDataMap["user:" + uName] = obj;
+      if (name || email || uName) {
+        allDataStudents.push({
+          name: name,
+          email: email,
+          phone: phone,
+          username: uName,
+          rawUsername: String(row[3] || "").trim(),
+          region: region,
+          subregion: subregion
+        });
+      }
     }
   }
 
-  var existingMap = {};
+  // 2. Index Discord members from the server
+  var memberByUsername = {};
+  var memberByName = {};
+  var memberById = {};
+
+  if (discordMembers && Array.isArray(discordMembers)) {
+    discordMembers.forEach(function(m) {
+      var dId = String(m.discordId || m.id || "").trim();
+      var rawUsername = String(m.username || "").trim();
+      var cleanUsername = rawUsername.toLowerCase().replace(/^@/, '');
+      var displayName = String(m.displayName || m.name || "").trim().toLowerCase();
+
+      var mObj = {
+        discordId: dId,
+        username: rawUsername,
+        cleanUsername: cleanUsername,
+        displayName: String(m.displayName || m.name || "").trim(),
+        status: m.status || "active"
+      };
+
+      if (dId) memberById[dId] = mObj;
+      if (cleanUsername) memberByUsername[cleanUsername] = mObj;
+      if (displayName) memberByName[displayName] = mObj;
+    });
+  }
+
+  // 3. Index existing Bot_Map rows
+  var existingMapById = {};
+  var existingMapByEmail = {};
+  var existingMapByUser = {};
   var botMapRange = botMapSheet.getDataRange();
   var botMapValues = botMapRange.getValues();
+
   for (var j = 1; j < botMapValues.length; j++) {
-    var dId = String(botMapValues[j][3] || "").trim();
-    if (dId) existingMap[dId] = j;
+    var bEmail = String(botMapValues[j][0] || "").trim().toLowerCase();
+    var bUser = String(botMapValues[j][2] || "").trim().toLowerCase().replace(/^@/, '');
+    var bId = String(botMapValues[j][3] || "").trim();
+
+    if (bId) existingMapById[bId] = j;
+    if (bEmail) existingMapByEmail[bEmail] = j;
+    if (bUser) existingMapByUser[bUser] = j;
   }
 
   var synced = 0;
   var added = 0;
   var rowsToAppend = [];
+  var processedBotMapRows = {};
 
+  // 4. Always Sync All Students from 'All Data' into 'Bot_Map'
+  allDataStudents.forEach(function(student) {
+    var cleanUName = student.username;
+    var cleanEmail = student.email.toLowerCase();
+    var cleanName = student.name.toLowerCase();
+
+    // Match with Discord member
+    var dMember = memberByUsername[cleanUName] || memberByName[cleanName] || null;
+    var dId = dMember ? dMember.discordId : "";
+    var currentUsername = dMember ? dMember.username : student.rawUsername;
+    var status = dMember ? dMember.status : "active";
+
+    // Check if student exists in Bot_Map
+    var rowIdx = -1;
+    if (dId && existingMapById[dId] !== undefined) {
+      rowIdx = existingMapById[dId];
+    } else if (cleanEmail && existingMapByEmail[cleanEmail] !== undefined) {
+      rowIdx = existingMapByEmail[cleanEmail];
+    } else if (cleanUName && existingMapByUser[cleanUName] !== undefined) {
+      rowIdx = existingMapByUser[cleanUName];
+    }
+
+    if (rowIdx > 0 && botMapValues[rowIdx]) {
+      botMapValues[rowIdx][0] = student.email || botMapValues[rowIdx][0];
+      botMapValues[rowIdx][1] = student.name || botMapValues[rowIdx][1];
+      botMapValues[rowIdx][2] = currentUsername || botMapValues[rowIdx][2];
+      if (dId) botMapValues[rowIdx][3] = dId;
+      botMapValues[rowIdx][4] = status;
+      botMapValues[rowIdx][5] = student.region || botMapValues[rowIdx][5];
+      botMapValues[rowIdx][6] = student.subregion || botMapValues[rowIdx][6];
+      botMapValues[rowIdx][7] = student.phone || botMapValues[rowIdx][7];
+      botMapValues[rowIdx][8] = "All Data Sync";
+      processedBotMapRows[rowIdx] = true;
+      synced++;
+    } else {
+      rowsToAppend.push([
+        student.email,
+        student.name,
+        currentUsername,
+        dId,
+        status,
+        student.region,
+        student.subregion,
+        student.phone,
+        "All Data Master",
+        ""
+      ]);
+      added++;
+    }
+  });
+
+  // 5. Also sync any Discord members who might not be in 'All Data' yet
   if (discordMembers && Array.isArray(discordMembers)) {
     discordMembers.forEach(function(m) {
-      var dId = String(m.discordId || m.id).trim();
+      var dId = String(m.discordId || m.id || "").trim();
       var rawUsername = String(m.username || "").trim();
       var cleanUsername = rawUsername.toLowerCase().replace(/^@/, '');
       var displayName = String(m.displayName || m.name || "").trim();
 
-      var match = allDataMap["user:" + cleanUsername] || {};
-      var email = match.email || m.email || "";
-      var name = match.name || displayName || rawUsername;
-      var phone = match.phone || m.phone || "";
-      var region = match.region || m.region || "";
-      var subregion = match.subregion || m.subregion || "";
-      var status = m.status || "active";
+      if (!dId) return;
 
-      if (existingMap[dId] !== undefined) {
-        var rowIdx = existingMap[dId];
-        botMapValues[rowIdx][0] = email;
-        botMapValues[rowIdx][1] = name;
+      var rowIdx = existingMapById[dId];
+      if (rowIdx !== undefined && !processedBotMapRows[rowIdx]) {
         botMapValues[rowIdx][2] = rawUsername;
         botMapValues[rowIdx][3] = dId;
-        botMapValues[rowIdx][4] = status;
-        botMapValues[rowIdx][5] = region;
-        botMapValues[rowIdx][6] = subregion;
-        botMapValues[rowIdx][7] = phone;
+        botMapValues[rowIdx][4] = m.status || "active";
+        processedBotMapRows[rowIdx] = true;
         synced++;
-      } else {
+      } else if (rowIdx === undefined && !allDataStudents.some(s => s.username === cleanUsername)) {
         rowsToAppend.push([
-          email, name, rawUsername, dId, status, region, subregion, phone, "Discord Sync", ""
+          m.email || "",
+          displayName || rawUsername,
+          rawUsername,
+          dId,
+          m.status || "active",
+          m.region || "",
+          m.subregion || "",
+          m.phone || "",
+          "Discord Sync",
+          ""
         ]);
         added++;
       }
     });
   }
 
-  // 1. Batch update existing rows
+  // 6. Write updates to Bot_Map sheet
   if (botMapValues.length > 1 && synced > 0) {
     botMapSheet.getRange(1, 1, botMapValues.length, botMapValues[0].length).setValues(botMapValues);
   }
 
-  // 2. Batch append new rows
   if (rowsToAppend.length > 0) {
     var startRow = botMapSheet.getLastRow() + 1;
     botMapSheet.getRange(startRow, 1, rowsToAppend.length, rowsToAppend[0].length).setValues(rowsToAppend);
   }
 
-  return { status: "SUCCESS", syncedCount: synced, addedCount: added };
+  return { status: "SUCCESS", syncedCount: synced, addedCount: added, totalAllData: allDataStudents.length };
 }
 
 function updateStudentProfileData(ss, data) {
