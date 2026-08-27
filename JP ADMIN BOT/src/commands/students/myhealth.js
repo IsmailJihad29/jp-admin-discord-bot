@@ -89,12 +89,17 @@ module.exports = {
       ScoringService.calculateRTBR(guildId).catch(() => [])
     ]);
 
+    const cohortManager = require('../../config/cohortManager');
+    const scoring = cohortManager.getCohortScoring(guildId);
+    const scoringStartDate = scoring.scoringStartDate || "2026-08-30";
+    const cohortTarget = scoring.jobTarget || constants.SCORING.DEFAULT_JOB_TARGET;
+
     const studentProfile = (rosterRes.students || []).find(s => s.discordId === discordId);
     const studentName = studentProfile?.name || member.displayName || member.user.username;
     const email = studentProfile?.email || "Not linked in Bot_Map";
     const region = studentProfile?.region || "Unspecified";
 
-    // 1. Attendance Metrics
+    // 1. Attendance Metrics (Filtered by scoringStartDate)
     const attRow = (attendanceRes.rows || []).find(r => r.discordId === discordId);
     let presentCount = 0;
     let absentCount = 0;
@@ -103,27 +108,32 @@ module.exports = {
     let attPoints = 0;
 
     if (attRow && attRow.sessions) {
-      Object.values(attRow.sessions).forEach(mark => {
+      Object.entries(attRow.sessions).forEach(([sessionDate, mark]) => {
+        const datePart = sessionDate.substring(0, 10);
+        // Only count sessions from scoringStartDate onwards!
+        if (datePart < scoringStartDate) return;
+
         const m = String(mark || "").toUpperCase().trim();
         totalSessions++;
         if (m === 'P' || m.startsWith('P')) {
           presentCount++;
-          attPoints += constants.SCORING.ATTENDANCE_PRESENT;
+          attPoints += scoring.attendancePresent;
         } else if (m === 'A' || m.startsWith('A')) {
           absentCount++;
-          attPoints += constants.SCORING.ATTENDANCE_ABSENT;
+          attPoints += scoring.attendanceAbsent;
         } else if (m === 'L' || m.startsWith('L')) {
           leaveCount++;
         }
       });
     }
 
-    // 2. Job Application Metrics (Last 7 Days)
-    const studentJobs = (jobsRes.jobs || []).filter(j => j.discordId === discordId);
+    // 2. Job Application Metrics (Filtered by scoringStartDate)
+    const studentJobs = (jobsRes.jobs || []).filter(j => 
+      j.discordId === discordId && (!j.date || j.date >= scoringStartDate)
+    );
     let totalJobs7Days = 0;
     let jobPoints = 0;
     let consecutiveDays = 0;
-    const cohortTarget = constants.SCORING.DEFAULT_JOB_TARGET;
 
     studentJobs.forEach(jobDay => {
       const count = Number(jobDay.count) || 0;
@@ -132,15 +142,19 @@ module.exports = {
       if (count >= cohortTarget) consecutiveDays++;
     });
 
-    const streakBonus = Math.min(consecutiveDays * constants.SCORING.STREAK_BONUS_PER_DAY, constants.SCORING.STREAK_CAP);
+    const streakBonus = Math.min(consecutiveDays * scoring.streakBonusPerDay, scoring.streakCap);
 
-    // 3. Interview Points (+5 per interview)
-    const studentInterviews = (interviewsRes.interviews || []).filter(i => i.discordId === discordId);
+    // 3. Interview Points (+2 pts default)
+    const studentInterviews = (interviewsRes.interviews || []).filter(i => 
+      i.discordId === discordId && (!i.date || i.date >= scoringStartDate)
+    );
     const interviewCount = studentInterviews.length;
-    const interviewPoints = interviewCount * constants.SCORING.INTERVIEW_POINTS;
+    const interviewPoints = interviewCount * scoring.interviewPoints;
 
     // 4. Job Task Points
-    const studentTasks = (tasksRes.tasks || []).filter(t => t.discordId === discordId);
+    const studentTasks = (tasksRes.tasks || []).filter(t => 
+      t.discordId === discordId && (!t.createdAt || t.createdAt >= scoringStartDate)
+    );
     let taskPoints = 0;
     studentTasks.forEach(t => {
       taskPoints += Number(t.pointsAwarded) || 0;
@@ -181,7 +195,10 @@ module.exports = {
     let healthGrade = "🟢 **EXCELLENT**";
     let healthAdvice = "Keep up the consistent job submissions and active attendance to maintain top referral priority!";
 
-    if (absentCount >= 3 || totalPoints < 0) {
+    if (totalSessions === 0 && totalJobs7Days === 0) {
+      healthGrade = "🟢 **READY FOR WEEK 1**";
+      healthAdvice = "Points baseline is reset. Starting Sunday, maintain daily attendance and submit 10 applications daily to build your streak and earn top referral priority!";
+    } else if (absentCount >= 3 || totalPoints < 0) {
       healthGrade = "🔴 **CRITICAL (AT-RISK)**";
       healthAdvice = "⚠️ You have 3 or more absences or negative points. Please submit attendance daily, catch up on job applications, and contact a Mentor for 1-on-1 support!";
     } else if (absentCount >= 2 || totalJobs7Days < 15) {
@@ -203,7 +220,7 @@ module.exports = {
       `  *Present: ${presentCount} | Absent: ${absentCount} | Leave: ${leaveCount}*\n\n` +
       `• 💼 **Job Tracker (Last 7 Days):** \`${jobPoints >= 0 ? '+' : ''}${jobPoints} pts\`\n` +
       `  *7-Day Total Apps: ${totalJobs7Days} | Streak: ${consecutiveDays} days (+${streakBonus} pts)*\n\n` +
-      `• 🎙️ **Interviews Logged (${interviewCount}):** \`+${interviewPoints} pts\` *(+5 pts each)*\n\n` +
+      `• 🎙️ **Interviews Logged (${interviewCount}):** \`+${interviewPoints} pts\` *(+${scoring.interviewPoints} pts each)*\n\n` +
       `• 🛠️ **Job Tasks (${studentTasks.length} tasks):** \`${taskPoints >= 0 ? '+' : ''}${taskPoints} pts\`\n\n` +
       `──────────────────────────────\n` +
       `📈 **Live Job Application Tracker Analytics:**\n` +

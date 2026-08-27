@@ -5,6 +5,7 @@
     "gasUrl": "https://script.google.com/macros/s/AKfycbx0W3efcmwqfxldAP-Kf7tdc8VPxLnt09ENrLljlWmQMeTOTRbBDvlniP5NOxHqiBql6g/exec",
     "gasSecret": "JP_ADMIN_26",
     "timezone": "Asia/Dhaka",
+    "scoringStartDate": "2026-08-30",
     "supervisors": [
       "850689096832516096",
       "839126915372941312",
@@ -32,6 +33,7 @@
     "gasUrl": "https://script.google.com/macros/s/AKfycbx4pxOw4Do1yVu8PCSPRf9xz1wh9bH_75klj0Ah3tMEC1FkNIdVBobcw68iqjgl-_wiVQ/exec",
     "gasSecret": "JP_ADMIN_26",
     "timezone": "Asia/Dhaka",
+    "scoringStartDate": "2026-08-30",
     "supervisors": [
       "839126915372941312"
     ],
@@ -57,6 +59,7 @@
     "gasUrl": "https://script.google.com/macros/s/AKfycbx0W3efcmwqfxldAP-Kf7tdc8VPxLnt09ENrLljlWmQMeTOTRbBDvlniP5NOxHqiBql6g/exec",
     "gasSecret": "JP_ADMIN_26",
     "timezone": "Asia/Dhaka",
+    "scoringStartDate": "2026-08-30",
     "supervisors": [],
     "targets": {
       "applications": 10

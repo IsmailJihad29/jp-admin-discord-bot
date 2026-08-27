@@ -22,7 +22,18 @@ class DropoutPredictorService {
    * Analyzes all active students across multiple risk signals
    */
   static async analyzeRiskSignals(guildId) {
-    const targetDaily = constants.SCORING.DEFAULT_JOB_TARGET;
+    const cohortManager = require('../config/cohortManager');
+    const scoring = cohortManager.getCohortScoring(guildId);
+    const scoringStartDate = scoring.scoringStartDate || "2026-08-30";
+    const DateTimeUtil = require('../utils/dateTime');
+    const todayStr = DateTimeUtil.getTodayDateStr();
+
+    // If scoring is reset and waiting for Sunday, no students are at risk
+    if (todayStr < scoringStartDate) {
+      return [];
+    }
+
+    const targetDaily = scoring.jobTarget || constants.SCORING.DEFAULT_JOB_TARGET;
     const weeklyTarget = targetDaily * 5; // e.g. 50 applications per week
 
     const [rosterRes, attendanceRes, jobsRes, tasksRes, scores] = await Promise.all([
@@ -36,21 +47,23 @@ class DropoutPredictorService {
     const activeStudents = (rosterRes.students || []).filter(s => s.status === 'active');
     const scoreMap = new Map(scores.map(s => [s.discordId, s]));
 
-    // Map recent 5 session dates
-    const recentDates = (attendanceRes.dates || []).slice(-5);
+    // Map recent session dates only from scoringStartDate onwards
+    const recentDates = (attendanceRes.dates || []).filter(d => d >= scoringStartDate).slice(-5);
     const attendanceMap = new Map((attendanceRes.rows || []).map(r => [r.discordId, r]));
 
-    // Map weekly jobs by student
+    // Map weekly jobs by student (filtered by scoringStartDate)
     const jobsCountMap = new Map();
     (jobsRes.jobs || []).forEach(j => {
+      if (j.date && j.date < scoringStartDate) return;
       const current = jobsCountMap.get(j.discordId) || 0;
       jobsCountMap.set(j.discordId, current + (Number(j.count) || 0));
     });
 
-    // Map task issues
+    // Map task issues (filtered by scoringStartDate)
     const overdueTasksMap = new Map();
     (tasksRes.tasks || []).forEach(t => {
-      if (t.submissionStatus === 'Overdue' || (t.submissionStatus === 'Announced' && t.deadline && t.deadline < new Date().toISOString().substring(0, 10))) {
+      if (t.createdAt && t.createdAt < scoringStartDate) return;
+      if (t.submissionStatus === 'Overdue' || (t.submissionStatus === 'Announced' && t.deadline && t.deadline < todayStr)) {
         const list = overdueTasksMap.get(t.discordId) || [];
         list.push(t);
         overdueTasksMap.set(t.discordId, list);
