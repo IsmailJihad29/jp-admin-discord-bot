@@ -12,7 +12,7 @@ module.exports = {
   name: 'posttemplates',
   aliases: ['guidelines', 'formatguidelines', 'postguidelines', 'channelguidelines', 'templates'],
   description: 'Broadcasts standardized posting guidelines and copy-paste templates to student channels individually or all at once',
-  usage: '!posttemplates [all | interview | task | tracker] | !posttemplates menu',
+  usage: '!posttemplates [all | interview | task | tracker | leave] | !posttemplates menu',
   mentorOnly: true,
 
   async execute(message, args, client) {
@@ -27,19 +27,24 @@ module.exports = {
         "• 🎙️ **Interview Prep Template:** Posts 30-question format guide to `#interview-preparations`\n" +
         "• 🛠️ **Job Task Template:** Posts task announcement & `!submit` guide to `#jobs-task-updates`\n" +
         "• 📊 **Job Tracker Sheet Template:** Posts one-time sheet linking guide to `#job-tracker`\n" +
-        "• 📢 **Broadcast All:** Posts all 3 templates at once across all channels\n\n" +
+        "• 📝 **Leave Request Template:** Posts leave rules & form guide to `#leave-request`\n" +
+        "• 📢 **Broadcast All:** Posts all 4 templates at once across all student channels\n\n" +
         "👇 *Click a button below to publish immediately:*",
         `JP ADMIN ${constants.BOT_VERSION} · Guidelines Hub`
       );
 
-      const row = new ActionRowBuilder().addComponents(
+      const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('btn_post_tpl_interview').setLabel('🎙️ Interview Template').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId('btn_post_tpl_task').setLabel('🛠️ Job Task Template').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('btn_post_tpl_job').setLabel('📊 Tracker Sheet Template').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('btn_post_tpl_all').setLabel('📢 Post ALL Templates').setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId('btn_post_tpl_leave').setLabel('📝 Leave Template').setStyle(ButtonStyle.Primary)
       );
 
-      return message.reply({ embeds: [menuEmbed], components: [row] });
+      const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('btn_post_tpl_all').setLabel('📢 Post ALL 4 Templates').setStyle(ButtonStyle.Danger)
+      );
+
+      return message.reply({ embeds: [menuEmbed], components: [row1, row2] });
     }
 
     // --- Direct Execution by Command Filter ---
@@ -176,6 +181,49 @@ module.exports = {
           embeds: [jobEmbed]
         });
         publishedChannels.push(`<#${jobCh.id}> (Job Tracker)`);
+      }
+    }
+
+    // 4. Post to #leave-request
+    if (filter === 'all' || filter === 'leave' || filter === 'leaves' || filter === '4' || filter === 'holiday') {
+      const leaveCh = ChannelHelper.findChannel(guild, 'LEAVE_REQUEST');
+
+      if (leaveCh) {
+        const leaveEmbed = Embeds.info(
+          "📝 Standard Guidelines: Student Leave & Excused Absence Requests",
+          "If you are unable to attend sessions due to illness, academic exams, or family emergencies, please submit an excused absence application in advance.\n\n" +
+          "✨ **Why Submit a Leave Request:**\n" +
+          "• 🛡️ **Absence Immunity:** Approved leave dates are marked as Excused (`L`) in Attendance with **0 penalty**, protecting you from 3-day absence warnings!\n" +
+          "• ⚡ **Automated Review:** Mentors receive an instant review card to approve your request.\n\n" +
+          "📋 **METHOD 1: INTERACTIVE FORM (EASIEST):**\n" +
+          "Click the **📝 Open Leave Request Form** button below or type `!leave` to fill out the popup form!\n\n" +
+          "📋 **METHOD 2: DIRECT COMMAND FORMAT (COPY & PASTE):**\n" +
+          "```text\n" +
+          "!leave <StartDate> <EndDate> <Reason>\n" +
+          "```\n\n" +
+          "💡 **Examples:**\n" +
+          "• Single Day: `!leave 2026-08-27 2026-08-27 Fever and doctor appointment`\n" +
+          "• Multiple Days: `!leave 2026-08-27 2026-08-29 University Final Semester Exams`\n\n" +
+          "🔔 **Status & Notifications:**\n" +
+          "• You will immediately receive confirmation that your request is **under review**.\n" +
+          "• Once approved by mentors, you will receive an automatic notification via **Direct Message (DM)**!",
+          `JP ADMIN ${constants.BOT_VERSION} · Leave Guidelines`
+        );
+
+        const formRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('open_leave_modal_general')
+            .setLabel('📝 Open Leave Request Form')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('📋')
+        );
+
+        await leaveCh.send({
+          content: `${mentionTag} 📢 **Please follow these guidelines when submitting leave/absence requests:**`,
+          embeds: [leaveEmbed],
+          components: [formRow]
+        });
+        publishedChannels.push(`<#${leaveCh.id}> (Leave Requests)`);
       }
     }
 

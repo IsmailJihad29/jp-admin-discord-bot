@@ -117,7 +117,7 @@ class InteractionHandler {
     // 2. Open Student Leave Request Modal
     if (customId.startsWith('open_leave_modal_')) {
       const studentId = customId.replace('open_leave_modal_', '');
-      if (interaction.user.id !== studentId) {
+      if (studentId !== 'general' && interaction.user.id !== studentId) {
         return interaction.reply({ content: "⚠️ Only the requesting student can click this button.", ephemeral: true });
       }
 
