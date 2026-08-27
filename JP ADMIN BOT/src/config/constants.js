@@ -4,24 +4,26 @@
  */
 
 module.exports = {
-  BOT_VERSION: "v3.29",
-  EXPECTED_GAS_VERSION: "v48",
+  BOT_VERSION: "v3.30",
+  EXPECTED_GAS_VERSION: "v50",
   DEFAULT_TIMEZONE: "Asia/Dhaka",
 
   // Recognized Channels for auto-discovery and operations
   CHANNELS: {
-    DISCUSSION: ["discussion", "general", "main"],
-    ANNOUNCEMENTS: ["announcements", "announcement", "nlap-announcements"],
-    BOT_ADMIN: ["jp-admin", "bot-admin", "cr-discussion", "mentor-zone", "mentors-zone"],
-    ATTENDANCE: ["daily-attendance", "attendance", "morning-attendance"],
-    JOB_TRACKING: ["job-tracker", "daily-job-tracker", "job-applications-tracker", "job-tracking-sheet", "job-tracking"],
-    INTERVIEW_UPDATE: ["interview-preparations", "interview-preparation", "interview-update", "interview-updates", "interviews"],
-    JOB_TASK: ["jobs-task-updates", "interview-task-updates", "job-task-update", "job-tasks", "task-updates", "job-task", "tasks"],
-    LEAVE: ["leave-request", "leaves", "issues"],
-    RTBR: ["referral-leaderboard", "leaderboard", "right-to-be-referred", "rtbr", "top-student-referrals"],
-    RESUME_REFERRAL: ["resume-needed", "resume-refer", "referrals"],
-    ONE_ON_ONE: ["1on1-support", "1-on-1-support", "mentorship-support", "queries-to-mentor"],
-    SUCCESSFULLY_HIRED: ["successfully-hired", "hired", "placements"]
+    DISCUSSION: ["discussion", "general", "main", "chat", "lounge"],
+    ANNOUNCEMENTS: ["announcements", "announcement", "nlap-announcements", "notice", "notices"],
+    BOT_ADMIN: ["jp-admin", "bot-admin", "cr-discussion", "mentor-zone", "mentors-zone", "admin"],
+    ATTENDANCE: ["daily-attendance", "attendance", "morning-attendance", "att"],
+    JOB_TRACKING: ["job-tracker", "job-trackers", "daily-job-tracker", "job-applications-tracker", "job-tracking-sheet", "job-tracking", "jobtracker"],
+    INTERVIEW_UPDATE: ["interview-preparations", "interview-preparation", "interview-update", "interview-updates", "interviews", "interview-prep"],
+    JOB_TASK: ["jobs-task-updates", "interview-task-updates", "job-task-update", "job-tasks", "task-updates", "job-task", "tasks", "task-update"],
+    LEAVE: ["leave-request", "leave-requests", "leave", "leaves", "issues", "leave-application", "leave-form", "apply-leave"],
+    LEAVE_REQUEST: ["leave-request", "leave-requests", "leave", "leaves", "issues", "leave-application", "leave-form", "apply-leave"],
+    RTBR: ["referral-leaderboard", "leaderboard", "leaderboards", "right-to-be-referred", "rtbr", "top-student-referrals"],
+    RESUME_REFERRAL: ["resume-needed", "resume-refer", "referrals", "resume"],
+    ONE_ON_ONE: ["1on1-support", "1-on-1-support", "mentorship-support", "queries-to-mentor", "support"],
+    HEALTH_CHECK: ["dev-health-check", "student-health-check", "my-health-check", "health-check", "healthcheck", "dev-health"],
+    SUCCESSFULLY_HIRED: ["successfully-hired", "hired", "placements", "success-stories"]
   },
 
   // Scoring configuration for Student Performance & Leaderboard

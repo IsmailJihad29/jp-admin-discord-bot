@@ -20,19 +20,40 @@ module.exports = {
       const loading = await message.reply("🔄 Synchronizing all Discord server members with Google Sheet `Bot_Map`...");
 
       try {
+        const cohortManager = require('../../config/cohortManager');
         const members = await guild.members.fetch();
-        const studentMembers = members.filter(m => !m.user.bot).map(m => ({
-          discordId: m.id,
-          username: m.user.username,
-          displayName: m.displayName,
-          status: 'active'
-        }));
+        const studentMembers = members.filter(m => !m.user.bot).map(m => {
+          const isSupervisor = cohortManager.isSupervisor(guild.id, m);
+          const isMentor = m.roles.cache.some(r => r.name.toLowerCase() === 'mentor');
+          const isHired = m.roles.cache.some(r => r.name.toLowerCase() === 'hired');
+
+          let status = 'active';
+          if (isSupervisor) status = 'supervisor';
+          else if (isMentor) status = 'mentor';
+          else if (isHired) status = 'hired';
+
+          return {
+            discordId: m.id,
+            username: m.user.username,
+            displayName: m.displayName,
+            status: status
+          };
+        });
 
         const result = await GasClient.syncRoster(guild.id, studentMembers);
 
+        const supervisorsCount = studentMembers.filter(s => s.status === 'supervisor').length;
+        const mentorsCount = studentMembers.filter(s => s.status === 'mentor').length;
+        const activeStudentsCount = studentMembers.filter(s => s.status === 'active').length;
+
         const embed = Embeds.success(
           "Member Roster Synchronized",
-          `• **Total Server Members Processed:** ${studentMembers.length}\n• **Updated Mappings:** ${result.syncedCount || 0}\n• **New Members Added to Bot_Map:** ${result.addedCount || 0}\n• Master source \`All Data\` and \`Roster Review\` updated.`
+          `• **Total Server Members Processed:** ${studentMembers.length}\n` +
+          `• **Supervisors (Exempt from Attendance):** ${supervisorsCount}\n` +
+          `• **Mentors (Exempt from Attendance):** ${mentorsCount}\n` +
+          `• **Active Students:** ${activeStudentsCount}\n` +
+          `• **Updated Mappings in Sheet:** ${result.syncedCount || 0}\n` +
+          `• **New Members Added:** ${result.addedCount || 0}`
         );
 
         await loading.edit({ content: null, embeds: [embed] });

@@ -5,7 +5,11 @@
     "gasUrl": "https://script.google.com/macros/s/AKfycbx0W3efcmwqfxldAP-Kf7tdc8VPxLnt09ENrLljlWmQMeTOTRbBDvlniP5NOxHqiBql6g/exec",
     "gasSecret": "JP_ADMIN_26",
     "timezone": "Asia/Dhaka",
-    "supervisors": [],
+    "supervisors": [
+      "850689096832516096",
+      "839126915372941312",
+      "1045010204527448267"
+    ],
     "targets": {
       "applications": 10,
       "outreach": 5
@@ -24,14 +28,38 @@
   },
   {
     "serverId": "1538021450018197594",
+    "name": "Squid Game - Career Hunt",
+    "gasUrl": "https://script.google.com/macros/s/AKfycbx4pxOw4Do1yVu8PCSPRf9xz1wh9bH_75klj0Ah3tMEC1FkNIdVBobcw68iqjgl-_wiVQ/exec",
+    "gasSecret": "JP_ADMIN_26",
+    "timezone": "Asia/Dhaka",
+    "supervisors": [
+      "839126915372941312"
+    ],
+    "targets": {
+      "applications": 10,
+      "outreach": 5
+    },
+    "automation": {
+      "enabled": true,
+      "forwarder": false,
+      "activeWindow": "04:50-23:30"
+    },
+    "forwarder": {
+      "enabled": false,
+      "sourceChannelId": null,
+      "destChannelId": null
+    },
+    "customChannels": {}
+  },
+  {
+    "serverId": "1532676584635367444",
     "name": "Default Cohort",
     "gasUrl": "https://script.google.com/macros/s/AKfycbx0W3efcmwqfxldAP-Kf7tdc8VPxLnt09ENrLljlWmQMeTOTRbBDvlniP5NOxHqiBql6g/exec",
     "gasSecret": "JP_ADMIN_26",
     "timezone": "Asia/Dhaka",
     "supervisors": [],
     "targets": {
-      "applications": 10,
-      "outreach": 5
+      "applications": 10
     },
     "automation": {
       "enabled": true,

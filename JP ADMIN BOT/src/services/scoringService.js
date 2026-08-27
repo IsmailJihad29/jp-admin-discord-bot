@@ -40,7 +40,9 @@ class ScoringService {
    * Calculates rolling 7-day / cumulative performance scores for all active students
    */
   static async calculateRTBR(guildId) {
-    const cohortTarget = constants.SCORING.DEFAULT_JOB_TARGET;
+    const cohortManager = require('../config/cohortManager');
+    const scoring = cohortManager.getCohortScoring(guildId);
+    const cohortTarget = scoring.jobTarget || constants.SCORING.DEFAULT_JOB_TARGET;
 
     // Fetch data from Apps Script backend for the 4 core components
     const [rosterRes, jobsRes, interviewsRes, tasksRes, attendanceRes] = await Promise.all([
@@ -51,7 +53,9 @@ class ScoringService {
       GasClient.getAttendance(guildId).catch(() => ({ attendance: [] }))
     ]);
 
-    const activeStudents = (rosterRes.students || []).filter(s => s.status === 'active');
+    const activeStudents = (rosterRes.students || []).filter(s =>
+      s.status === 'active' && s.status !== 'supervisor' && s.status !== 'mentor' && s.status !== 'staff'
+    );
     const studentMap = new Map();
 
     activeStudents.forEach(s => {
@@ -71,7 +75,7 @@ class ScoringService {
       });
     });
 
-    // 1. Daily & Morning Attendance Points (+1 Present, -1 Absent, 0 Leave) from Attendance Matrix
+    // 1. Daily & Morning Attendance Points (Present, Absent, Leave)
     const attRows = attendanceRes.rows || attendanceRes.attendance || [];
     attRows.forEach(att => {
       const student = studentMap.get(att.discordId);
@@ -80,15 +84,15 @@ class ScoringService {
           Object.values(att.sessions).forEach(mark => {
             const m = String(mark || "").toUpperCase().trim();
             if (m === 'P' || m === 'PRESENT' || m.startsWith('P')) {
-              student.attendancePoints += constants.SCORING.ATTENDANCE_PRESENT;
+              student.attendancePoints += scoring.attendancePresent;
             } else if (m === 'A' || m === 'ABSENT' || m.startsWith('A')) {
-              student.attendancePoints += constants.SCORING.ATTENDANCE_ABSENT;
+              student.attendancePoints += scoring.attendanceAbsent;
             } // Leave 'L' is 0 points
           });
         } else if (att.status === 'P' || att.status === 'PRESENT') {
-          student.attendancePoints += constants.SCORING.ATTENDANCE_PRESENT;
+          student.attendancePoints += scoring.attendancePresent;
         } else if (att.status === 'A' || att.status === 'ABSENT') {
-          student.attendancePoints += constants.SCORING.ATTENDANCE_ABSENT;
+          student.attendancePoints += scoring.attendanceAbsent;
         }
       }
     });
@@ -118,20 +122,20 @@ class ScoringService {
         }
       });
 
-      // Streak points: +3 per consecutive day (cap 15)
-      student.streakBonus = Math.min(consecutiveDays * constants.SCORING.STREAK_BONUS_PER_DAY, constants.SCORING.STREAK_CAP);
+      // Streak points
+      student.streakBonus = Math.min(consecutiveDays * scoring.streakBonusPerDay, scoring.streakCap);
     });
 
-    // 3. Interview Points (+5 per interview)
+    // 3. Interview Points
     (interviewsRes.interviews || []).forEach(item => {
       const student = studentMap.get(item.discordId);
       if (student) {
         student.interviewCount += 1;
-        student.interviewPoints += constants.SCORING.INTERVIEW_POINTS;
+        student.interviewPoints += scoring.interviewPoints;
       }
     });
 
-    // 4. Job Task Points (+1 announced, +1 approved, -2 overdue)
+    // 4. Job Task Points
     (tasksRes.tasks || []).forEach(task => {
       const student = studentMap.get(task.discordId);
       if (student) {

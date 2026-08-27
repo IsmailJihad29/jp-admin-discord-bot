@@ -120,6 +120,12 @@ class Scheduler {
    */
   async checkAndWarnInactiveStudents(guild) {
     try {
+      const todayDate = DateTimeUtil.getTodayDateStr();
+      if (cohortManager.isOffday(guild.id, todayDate)) {
+        Logger.info(`[AttendanceWarning] Skipping warnings for guild ${guild.id}: Today is an Offday/Holiday.`);
+        return;
+      }
+
       const attRes = await GasClient.getAttendance(guild.id);
       const rows = attRes.rows || [];
       const dates = (attRes.dates || []).slice(-5); // last 5 days (current week)
@@ -131,6 +137,8 @@ class Scheduler {
 
       for (const student of rows) {
         if (!student.discordId || student.status !== 'active') continue;
+        const member = guild.members.cache.get(student.discordId);
+        if (member && cohortManager.isStaff(guild.id, member)) continue;
 
         let weeklyAbsences = 0;
         dates.forEach(d => {
@@ -183,6 +191,8 @@ class Scheduler {
 
         for (const student of rows) {
           if (!student.discordId || student.status !== 'active') continue;
+          const member = guild.members.cache.get(student.discordId);
+          if (member && cohortManager.isStaff(guild.id, member)) continue;
 
           let weeklyAbsences = 0;
           dates.forEach(d => {
@@ -246,6 +256,11 @@ class Scheduler {
 
     for (const guild of this.client.guilds.cache.values()) {
       try {
+        if (cohortManager.isOffday(guild.id, todayDate)) {
+          Logger.info(`[DailyJobAudit] Skipping 23:30 job audit for guild ${guild.id}: Today is an Offday/Holiday.`);
+          continue;
+        }
+
         const cohort = cohortManager.getCohort(guild.id);
         const target = cohort?.targets?.applications || constants.SCORING.DEFAULT_JOB_TARGET;
 
@@ -256,6 +271,9 @@ class Scheduler {
         const belowTargetList = [];
 
         for (const student of activeStudents) {
+          const member = guild.members.cache.get(student.discordId);
+          if (member && cohortManager.isStaff(guild.id, member)) continue;
+
           let countToday = 0;
           let totalRows = 0;
 
@@ -341,27 +359,32 @@ class Scheduler {
 
   /**
    * Weekly Performance Leaderboard (Thursday 6 PM)
+   * Publishes full student standings with @everyone mention to #referral-leaderboard
    */
   async runWeeklyLeaderboard() {
+    Logger.info("[WeeklyLeaderboard] Publishing Thursday 18:00 weekly leaderboard.");
+
     for (const guild of this.client.guilds.cache.values()) {
       const channel = this.getChannel(guild, 'RTBR') || this.getChannel(guild, 'DISCUSSION');
       if (!channel) continue;
 
       try {
         const rtbr = await ScoringService.calculateRTBR(guild.id);
-        const top10 = rtbr.slice(0, 10);
+        if (!rtbr || rtbr.length === 0) continue;
 
-        const list = top10.map((s, idx) => {
-          const medal = idx === 0 ? '🥇' : (idx === 1 ? '🥈' : (idx === 2 ? '🥉' : `**#${idx + 1}**`));
-          return `${medal} <@${s.discordId}> (${s.name}) — **${s.totalPoints} pts**\n   ${s.details}`;
-        }).join('\n\n');
-
-        const embed = Embeds.success(
-          "🏆 Weekly Performance Leaderboard (Thursday 6 PM)",
-          `Here are the top active students across attendance, job applications, streaks, interviews, and tasks:\n\n${list}\n\n*Keep up the momentum!*`
+        const embeds = Embeds.fullWeeklyLeaderboardEmbeds(
+          "Weekly Student Performance Leaderboard (Thursday 6 PM)",
+          rtbr,
+          "Score Formula: Attendance (+1/-1) + Jobs/Target + Streak (+3/day) + Interviews (+5) + Tasks"
         );
 
-        channel.send({ embeds: [embed] }).catch(() => {});
+        const studentRole = guild.roles.cache.find(r => r.name.toLowerCase() === (constants.ROLES.ACTIVE_STUDENT || 'active student').toLowerCase());
+        const mentionTag = studentRole ? `@everyone <@&${studentRole.id}>` : `@everyone`;
+
+        await channel.send({
+          content: `${mentionTag} 📢 **WEEKLY COHORT PERFORMANCE & REFERRAL LEADERBOARD IS LIVE!** 🏆`,
+          embeds: embeds
+        }).catch(() => {});
       } catch (err) {
         Logger.error("Failed weekly leaderboard:", err.message);
       }

@@ -77,6 +77,73 @@ class Embeds {
       .setFooter({ text: footerNote || `JP ADMIN ${constants.BOT_VERSION} · Weekly Leaderboard` });
   }
 
+  static fullWeeklyLeaderboardEmbeds(title, entries, footerNote) {
+    if (!entries || entries.length === 0) {
+      return [
+        new EmbedBuilder()
+          .setColor(0xF59E0B)
+          .setTitle(`🏆 ${title}`)
+          .setDescription("No student performance records found for this period yet.")
+          .setFooter({ text: footerNote || `JP ADMIN ${constants.BOT_VERSION} · Weekly Leaderboard` })
+      ];
+    }
+
+    const embeds = [];
+    const top10 = entries.slice(0, 10);
+    const rest = entries.slice(10);
+
+    // Embed 1: Top 10 High Performers
+    let topDesc = `📊 **Top 10 High Performers · Right-To-Be-Referred (RTBR)**\n\n`;
+    topDesc += top10.map((e, idx) => {
+      const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `**#${idx + 1}**`;
+      const nameStr = e.name ? `(${e.name})` : '';
+      return `${medal} <@${e.discordId}> ${nameStr} — **${e.totalPoints} pts**\n   ${e.details || ''}`;
+    }).join('\n\n');
+
+    topDesc += `\n\n──────────────────────────────\n` +
+      `💡 *Score Formula: Attendance (+1/-1) + Jobs Tiered Score + Streak (+3/day) + Interviews (+5) + Tasks (+1/+1)*`;
+
+    const topEmbed = new EmbedBuilder()
+      .setColor(0xF59E0B) // Amber Gold
+      .setTitle(`🏆 ${title} · (Top 10 Performers)`)
+      .setDescription(topDesc);
+
+    if (rest.length === 0) {
+      topEmbed.setFooter({ text: footerNote || `JP ADMIN ${constants.BOT_VERSION} · Total ${entries.length} Active Students` });
+      return [topEmbed];
+    }
+
+    embeds.push(topEmbed);
+
+    // Embed 2 (and chunks if needed): All Remaining Students in the SAME Style
+    const chunkSize = 15;
+    for (let i = 0; i < rest.length; i += chunkSize) {
+      const chunk = rest.slice(i, i + chunkSize);
+      const startRank = 11 + i;
+      const endRank = startRank + chunk.length - 1;
+
+      let restDesc = `📋 **Cohort Performance Standings (Ranks #${startRank} – #${endRank}):**\n\n`;
+      restDesc += chunk.map((e, cIdx) => {
+        const rankNum = startRank + cIdx;
+        const nameStr = e.name ? `(${e.name})` : '';
+        return `**#${rankNum}** <@${e.discordId}> ${nameStr} — **${e.totalPoints} pts**\n   ${e.details || ''}`;
+      }).join('\n\n');
+
+      const restEmbed = new EmbedBuilder()
+        .setColor(0x3B82F6) // Sapphire Blue
+        .setTitle(`📊 Cohort Leaderboard (Ranks #${startRank} – #${endRank})`)
+        .setDescription(restDesc);
+
+      if (i + chunkSize >= rest.length) {
+        restEmbed.setFooter({ text: footerNote || `JP ADMIN ${constants.BOT_VERSION} · Total ${entries.length} Active Students` });
+      }
+
+      embeds.push(restEmbed);
+    }
+
+    return embeds;
+  }
+
   static attendanceReport(title, dateStr, res) {
     const records = res.records || [];
     const present = records.filter(r => r.status === 'P');

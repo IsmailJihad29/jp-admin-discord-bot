@@ -46,8 +46,10 @@ class GasClient {
         }
       } catch (err) {
         Logger.warn(`[GAS API] Attempt ${attempt}/${retries} failed for action "${action}": ${err.message}`);
-        if (attempt >= retries) {
-          Logger.error(`[GAS API] Exhausted all ${retries} attempts for action "${action}".`);
+        if (err.message.includes("Unknown action") || attempt >= retries) {
+          if (attempt >= retries) {
+            Logger.error(`[GAS API] Exhausted all ${retries} attempts for action "${action}".`);
+          }
           throw err;
         }
         // Exponential backoff wait
@@ -182,6 +184,26 @@ class GasClient {
 
   static async scanMorningAttendance(guildId, date) {
     return this.request(guildId, 'scanMorningAttendance', { date });
+  }
+
+  static async scanCustomAttendance(guildId, tabName, date, sessionLabel) {
+    return this.request(guildId, 'scanCustomAttendance', { tabName, date, sessionLabel });
+  }
+
+  static async getHolidays(guildId) {
+    return this.request(guildId, 'getHolidays');
+  }
+
+  static async setHoliday(guildId, holidayData) {
+    return this.request(guildId, 'setHoliday', holidayData);
+  }
+
+  static async removeHoliday(guildId, date) {
+    return this.request(guildId, 'removeHoliday', { date });
+  }
+
+  static async repairAttendance(guildId) {
+    return this.request(guildId, 'repairAttendance', {});
   }
 
   static async recordJobTask(guildId, taskData) {

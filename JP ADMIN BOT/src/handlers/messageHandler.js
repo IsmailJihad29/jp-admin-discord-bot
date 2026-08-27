@@ -47,17 +47,16 @@ class MessageHandler {
   }
 
   /**
-   * Generates AI interview guidance & logs +5 points
+   * Generates AI 30-question interview guidance & logs +5 points
    */
   static async handleInterviewPost(message) {
     try {
       const studentId = message.author.id;
       const studentName = message.author.displayName || message.author.username;
 
-      // Generate Google Gemini AI interview prep feedback
-      const aiFeedback = await GeminiService.generateInterviewFeedback(message.content);
+      message.react('🎯').catch(() => {});
 
-      // Record interview to Sheets
+      // Record interview to Sheets immediately
       await GasClient.recordInterview(message.guild.id, {
         name: studentName,
         discordId: studentId,
@@ -68,12 +67,71 @@ class MessageHandler {
         discordLink: message.url
       }).catch((e) => Logger.error("Failed to record interview:", e.message));
 
-      const embed = Embeds.success(
-        `🎯 Interview Logged (+5 Points!)`,
-        `**Mentor AI Prep Suggestions:**\n${aiFeedback}`
-      );
+      // Generate Google Gemini AI 30-question master interview prep guide
+      const aiFeedback = await GeminiService.generateInterviewFeedback(message.content);
 
-      message.reply({ embeds: [embed] }).catch(() => {});
+      // Split into clean chunks of max 3800 chars for Discord embeds
+      const maxLen = 3800;
+      const embeds = [];
+
+      if (aiFeedback.length <= maxLen) {
+        embeds.push(Embeds.success(
+          `🎯 Interview Logged (+5 Points!) · 30-Question Master Prep Guide`,
+          aiFeedback
+        ));
+      } else {
+        // Split by lines / sections
+        const lines = aiFeedback.split('\n');
+        let currentChunk = "";
+        let partIndex = 1;
+
+        for (const line of lines) {
+          if ((currentChunk + '\n' + line).length > maxLen) {
+            embeds.push(Embeds.success(
+              partIndex === 1
+                ? `🎯 Interview Logged (+5 Points!) · 30-Question Prep (Part 1)`
+                : `🎯 30-Question Prep Guide (Part ${partIndex})`,
+              currentChunk
+            ));
+            currentChunk = line;
+            partIndex++;
+          } else {
+            currentChunk += (currentChunk ? '\n' : '') + line;
+          }
+        }
+        if (currentChunk) {
+          embeds.push(Embeds.success(
+            `🎯 30-Question Prep Guide (Part ${partIndex})`,
+            currentChunk
+          ));
+        }
+      }
+
+      // Try creating a dedicated study thread for this interview
+      const thread = await message.startThread({
+        name: `🎯 Interview Prep: ${studentName}`,
+        autoArchiveDuration: 1440
+      }).catch(() => null);
+
+      const cohortManager = require('../config/cohortManager');
+      const interviewPts = cohortManager.getCohortScoring(message.guild.id).interviewPoints;
+
+      if (thread) {
+        // Post full guide in thread for organized discussion
+        for (const emb of embeds) {
+          await thread.send({ embeds: [emb] }).catch(() => {});
+        }
+        const summaryEmbed = Embeds.success(
+          `🎯 Interview Logged (+${interviewPts} Points!)`,
+          `Awesome job <@${studentId}>! We have compiled a **30-Question Master Preparation Guide** tailored for this role.\n\n` +
+          `• ⭐ **Score Boost:** \`+${interviewPts} points\` added to your Leaderboard & RTBR score!\n` +
+          `👉 **Study the full 30 questions & tips in the dedicated thread:** <#${thread.id}>`
+        );
+        message.reply({ embeds: [summaryEmbed] }).catch(() => {});
+      } else {
+        // Fallback: Reply directly with embeds
+        message.reply({ embeds: embeds.slice(0, 10) }).catch(() => {});
+      }
     } catch (e) {
       Logger.error("Error handling interview post:", e.message);
     }
@@ -130,16 +188,56 @@ class MessageHandler {
       if (parsed && parsed.sheetId) {
         const studentId = message.author.id;
         const studentName = message.author.displayName || message.author.username;
+        const sheetUrl = message.content.trim();
 
+        // 1. Live test scrape
+        const scrape = await JobScraperService.scrapeStudentJobSheet(sheetUrl, studentId);
+
+        if (!scrape.success) {
+          message.react('⚠️').catch(() => {});
+          return message.reply({
+            embeds: [Embeds.warning(
+              "⚠️ Google Sheet Permission Restricted",
+              `Hello <@${studentId}>, the bot cannot read your Job Tracker Sheet.\n\n` +
+              `**Reason:** ${scrape.error}\n\n` +
+              `🛠️ **How to fix in 10 seconds:**\n` +
+              `1. Open your Google Sheet > Click **Share** (top-right).\n` +
+              `2. Change General access from *Restricted* to **"Anyone with the link" (Viewer or Editor)**.\n` +
+              `3. Paste your link here again or run \`!linksheet <URL>\`!`
+            )]
+          });
+        }
+
+        // 2. Fetch student info from Roster
+        const rosterRes = await GasClient.getRoster(message.guild.id).catch(() => ({ students: [] }));
+        const studentProfile = (rosterRes.students || []).find(s => s.discordId === studentId);
+        const studentEmail = studentProfile?.email || "";
+
+        // 3. Save to Google Sheets database
         await GasClient.request(message.guild.id, 'recordJobSheet', {
           discordId: studentId,
           name: studentName,
-          sheetUrl: message.content.trim(),
+          email: studentEmail,
+          sheetUrl: sheetUrl,
           sheetId: parsed.sheetId,
           gid: parsed.gid
         }).catch(() => {});
 
         message.react('📊').catch(() => {});
+        message.react('✅').catch(() => {});
+
+        const embed = Embeds.success(
+          "Job Application Tracker Linked! 🎉",
+          `Hello <@${studentId}>, your personal Google Sheet Job Application Tracker has been registered successfully!\n\n` +
+          `• 💼 **Existing Applications Detected:** **${scrape.totalRows} applications**\n` +
+          `• 📅 **Dated Today:** **${scrape.datedTodayCount} applications**\n` +
+          `• 🤖 **24/7 Automated Scraping:** 🟢 **Active**\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `💡 **HOW IT WORKS:**\n` +
+          `You only need to link your sheet **ONCE**. Every night at **23:30 (11:30 PM)**, the bot will automatically read your sheet, count your applications for the day, and award your points & streak bonus!`
+        );
+
+        message.reply({ embeds: [embed] }).catch(() => {});
       }
     } catch (e) {
       Logger.error("Error registering job sheet link:", e.message);

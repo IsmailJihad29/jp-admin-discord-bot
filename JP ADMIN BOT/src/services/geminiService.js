@@ -27,7 +27,7 @@ class GeminiService {
   }
 
   /**
-   * Generates tailored interview preparation questions and tips
+   * Generates comprehensive 30-question tailored interview preparation master guide
    */
   async generateInterviewFeedback(content) {
     if (!this.isConfigured()) {
@@ -36,19 +36,31 @@ class GeminiService {
     }
 
     try {
-      const prompt = `You are a Senior Tech Lead and Career Mentor in an intensive software engineering bootcamp.
+      const prompt = `You are a Principal Software Architect and Executive Technical Career Mentor in a top software engineering mentorship bootcamp.
 A student posted this update about an upcoming job interview:
 "${content}"
 
-Analyze the post, extract the company, role, and technology stack.
-Then provide:
-1. **5 Tailored Interview Questions**:
-   - 3 Deep Technical questions specific to their tech stack & role.
-   - 2 High-impact Behavioral/Scenario questions likely for this company/role.
-2. **Key Preparation Tips**:
-   - 3 actionable, high-yield tips on how to stand out and answer effectively.
+Analyze the post and extract the company name, job role, and tech stack.
+Generate a comprehensive, high-yield **30-Question Interview Master Preparation Guide** tailored specifically to this company, role, and tech stack.
 
-Keep your response professional, encouraging, and formatted in clean markdown bullet points.`;
+Structure your response clearly with these 4 sections:
+
+### 📌 Section 1: Core Technical & Language Fundamentals (Questions 1 - 8)
+Generate 8 in-depth questions testing language mechanics, data structures, runtime internals, memory/async models, and syntax quirks for the specified tech stack.
+
+### 📌 Section 2: Framework, Architecture & State Management (Questions 9 - 16)
+Generate 8 questions testing framework patterns, component lifecycle, APIs, optimization, and database/caching design.
+
+### 📌 Section 3: Scenario-Based Problem Solving & System Design (Questions 17 - 24)
+Generate 8 questions testing real-world architectural tradeoffs, bug troubleshooting, security, high-load scaling, and edge cases.
+
+### 📌 Section 4: Behavioral, Culture Fit & STAR Scenarios (Questions 25 - 30)
+Generate 6 behavioral/STAR questions tailored for this company culture, conflict resolution, project delivery, and motivation.
+
+### 💡 High-Yield Interview Strategy & Advice
+Provide 3 concise, actionable tips to stand out and ace this specific interview.
+
+Format each question with its exact number (1. to 30.) and a brief 1-sentence insight on what interviewers look for. Keep formatting clean, highly professional, inspiring, and easy to read.`;
 
       const response = await this.ai.models.generateContent({
         model: 'gemini-2.0-flash',

@@ -96,6 +96,14 @@ const REQUIRED_CHANNEL_DEFINITIONS = [
     topic: 'General cohort discussion and student queries',
     isPrivate: false
   },
+  {
+    key: 'HEALTH_CHECK',
+    name: '🩺 | dev-health-check',
+    displayName: '🩺 | dev-health-check',
+    categoryName: 'STUDENTS ZONE',
+    topic: 'Student personal health, score, attendance, application velocity, and status check (!myhealth)',
+    isPrivate: false
+  },
 
   // --- FUN & CHILL ---
   {
@@ -172,6 +180,8 @@ module.exports = {
       const supervisorRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.SUPERVISOR || 'supervisor').toLowerCase());
       const restrictionRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
 
+      const studentRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.ACTIVE_STUDENT || 'active student').toLowerCase());
+
       // 2. Discover Categories
       const categoriesMap = new Map();
       guild.channels.cache.forEach(c => {
@@ -196,38 +206,138 @@ module.exports = {
         return newCat;
       }
 
-      // 3. Scan & Create Missing Channels
+      // 3. Helper to build permission overwrites for a channel key
+      function buildPermissionOverwrites(chDef) {
+        const overwrites = [];
+
+        if (chDef.key === 'BOT_ADMIN') {
+          // Private Mentor & Supervisor Command Center
+          overwrites.push({
+            id: guild.roles.everyone.id,
+            deny: [PermissionFlagsBits.ViewChannel]
+          });
+          if (studentRole) {
+            overwrites.push({
+              id: studentRole.id,
+              deny: [PermissionFlagsBits.ViewChannel]
+            });
+          }
+          if (restrictionRole) {
+            overwrites.push({
+              id: restrictionRole.id,
+              deny: [PermissionFlagsBits.ViewChannel]
+            });
+          }
+          if (mentorRole) {
+            overwrites.push({
+              id: mentorRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AttachFiles]
+            });
+          }
+          if (supervisorRole) {
+            overwrites.push({
+              id: supervisorRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AttachFiles]
+            });
+          }
+        } else if (chDef.key === 'RESUME_REFERRAL') {
+          // Referral Drive — Hidden from Referral Restricted students
+          if (restrictionRole) {
+            overwrites.push({
+              id: restrictionRole.id,
+              deny: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+            });
+          }
+          if (studentRole) {
+            overwrites.push({
+              id: studentRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
+            });
+          }
+          if (mentorRole) {
+            overwrites.push({
+              id: mentorRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+            });
+          }
+          if (supervisorRole) {
+            overwrites.push({
+              id: supervisorRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+            });
+          }
+        } else if (chDef.key === 'ONE_ON_ONE') {
+          // 1on1 Support Booking
+          if (studentRole) {
+            overwrites.push({
+              id: studentRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
+            });
+          }
+          if (mentorRole) {
+            overwrites.push({
+              id: mentorRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks]
+            });
+          }
+          if (supervisorRole) {
+            overwrites.push({
+              id: supervisorRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.EmbedLinks]
+            });
+          }
+        } else {
+          // Standard student feature channels
+          if (studentRole) {
+            overwrites.push({
+              id: studentRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+            });
+          }
+          if (mentorRole) {
+            overwrites.push({
+              id: mentorRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+            });
+          }
+          if (supervisorRole) {
+            overwrites.push({
+              id: supervisorRole.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+            });
+          }
+        }
+
+        return overwrites;
+      }
+
+      // 4. Scan, Create Missing, & Update Permissions on All Channels
       const existingChannels = [];
       const createdChannels = [];
+      const updatedPermChannels = [];
 
       for (const chDef of REQUIRED_CHANNEL_DEFINITIONS) {
         let found = ChannelHelper.findChannel(guild, chDef.key);
 
         if (found) {
           existingChannels.push(`• 🟢 <#${found.id}> ➔ \`${chDef.key}\``);
-        } else {
-          // Channel is missing -> Automatically create it in the proper category!
-          const targetCategory = await getOrCreateCategory(chDef.categoryName);
 
-          const permissionOverwrites = [];
-          if (chDef.isPrivate) {
-            permissionOverwrites.push({
-              id: guild.roles.everyone.id,
-              deny: [PermissionFlagsBits.ViewChannel]
-            });
-            if (mentorRole) {
-              permissionOverwrites.push({
-                id: mentorRole.id,
-                allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
-              });
+          // Update permission overwrites on existing channels to ensure role policies
+          const overwrites = buildPermissionOverwrites(chDef);
+          if (overwrites.length > 0) {
+            for (const ow of overwrites) {
+              await found.permissionOverwrites.edit(ow.id, {
+                ViewChannel: ow.allow?.includes(PermissionFlagsBits.ViewChannel) ? true : (ow.deny?.includes(PermissionFlagsBits.ViewChannel) ? false : null),
+                SendMessages: ow.allow?.includes(PermissionFlagsBits.SendMessages) ? true : (ow.deny?.includes(PermissionFlagsBits.SendMessages) ? false : null),
+                ReadMessageHistory: ow.allow?.includes(PermissionFlagsBits.ReadMessageHistory) ? true : (ow.deny?.includes(PermissionFlagsBits.ReadMessageHistory) ? false : null)
+              }).catch(() => {});
             }
-            if (supervisorRole) {
-              permissionOverwrites.push({
-                id: supervisorRole.id,
-                allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
-              });
-            }
+            updatedPermChannels.push(chDef.key);
           }
+        } else {
+          // Channel is missing -> Automatically create it with exact role permissions!
+          const targetCategory = await getOrCreateCategory(chDef.categoryName);
+          const permissionOverwrites = buildPermissionOverwrites(chDef);
 
           const newCh = await guild.channels.create({
             name: chDef.name,
@@ -244,15 +354,6 @@ module.exports = {
             createdChannels.push(`• ✨ <#${newCh.id}> in \`${targetCategory ? targetCategory.name : 'Server'}\``);
             found = newCh;
           }
-        }
-
-        // Apply special restriction override on RESUME_REFERRAL (#resume-needed)
-        if (chDef.key === 'RESUME_REFERRAL' && found && restrictionRole) {
-          await found.permissionOverwrites.edit(restrictionRole, {
-            ViewChannel: false,
-            SendMessages: false,
-            ReadMessageHistory: false
-          }).catch(() => {});
         }
       }
 

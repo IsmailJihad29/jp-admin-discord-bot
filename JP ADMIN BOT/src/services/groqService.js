@@ -177,22 +177,26 @@ Return ONLY JSON:
 
   async generateInterviewFeedback(interviewPostText) {
     if (!this.groq) {
-      return "🎉 Great job scheduling this interview! Review standard STAR behavioral questions and core fundamentals for your role.";
+      return "🎉 Great job scheduling this interview! Review core fundamentals for your role, system design patterns, and standard STAR behavioral questions.";
     }
 
     try {
-      const prompt = `A student in the tech mentorship bootcamp just posted an interview update in Discord:
+      const prompt = `A student in a software engineering mentorship bootcamp posted an interview update:
 "${interviewPostText}"
 
-Provide a concise, high-impact mentoring response (max 3-4 bullet points):
-1. Congratulate them.
-2. Provide 2-3 specific technical/behavioral focus topics or mock questions tailored to the mentioned company or role.
-3. Wish them luck! Keep it professional and motivating.`;
+Generate a 30-Question Interview Master Guide categorized into:
+1. Core Technical & Language Fundamentals (Q1-Q8)
+2. Framework & Architecture (Q9-Q16)
+3. System Design & Scenario Problem Solving (Q17-Q24)
+4. Behavioral & Culture Fit (Q25-Q30)
+5. 3 Actionable Tips to ace the interview.
+
+Format each question numbered 1 to 30 clearly in clean markdown.`;
 
       const response = await this.groq.chat.completions.create({
         messages: [{ role: 'user', content: prompt }],
         model: this.model,
-        temperature: 0.6
+        temperature: 0.5
       });
 
       return response.choices[0]?.message?.content || "Keep up the great work!";

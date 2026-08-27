@@ -100,6 +100,17 @@ class ChannelHelper {
     if (!messageOrChannel) return false;
     const channel = messageOrChannel.channel || messageOrChannel;
     if (!channel || !channel.name) return false;
+
+    // 1. Check custom channel ID if explicitly set in cohort config
+    const guild = channel.guild || messageOrChannel.guild;
+    if (guild) {
+      const cohort = cohortManager.getCohort(guild.id);
+      if (cohort && cohort.customChannels && cohort.customChannels[channelKey] === channel.id) {
+        return true;
+      }
+    }
+
+    // 2. Match against channel name aliases
     return this.matchChannel(channel.name, channelKey);
   }
 }

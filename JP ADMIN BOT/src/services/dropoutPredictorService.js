@@ -157,7 +157,7 @@ class DropoutPredictorService {
 
     // Check pinned messages in #1on1-support
     try {
-      const pinned = await channel.messages.fetchPinned();
+      const pinned = channel.messages.fetchPins ? await channel.messages.fetchPins().catch(() => new Map()) : await channel.messages.fetchPinned().catch(() => new Map());
       for (const msg of pinned.values()) {
         const match = msg.content.match(/(https?:\/\/[^\s]+)/);
         if (match) return match[1];
@@ -186,9 +186,10 @@ class DropoutPredictorService {
 
       // 1. Dispatch 1-on-1 Booking DMs to HIGH_RISK candidates
       for (const student of highRisk) {
+        if (!student.discordId) continue;
         try {
           const member = await guild.members.fetch(student.discordId).catch(() => null);
-          if (member) {
+          if (member && member.user) {
             const linkText = bookingLink
               ? `🔗 **Book 15-Min 1-on-1 Review:** [Click Here to Schedule](${bookingLink})\n`
               : (oneOnOneChannel ? `💬 **Channel:** Please check <#${oneOnOneChannel.id}> to book your session.\n` : '');

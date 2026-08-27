@@ -11,7 +11,7 @@ module.exports = {
   aliases: ['absent', 'repairattendance', 'checkattendance'],
   description: 'View, repair, and check attendance metrics and absences',
   usage: '!attendance | !absent [date] | !repairattendance',
-  supervisorOnly: true,
+  mentorOnly: true,
 
   async execute(message, args, client) {
     const commandName = message.content.slice(1).split(/ +/)[0].toLowerCase();
@@ -50,7 +50,24 @@ module.exports = {
         const res = await GasClient.scanDailyAttendance(guildId, targetDate);
         if (res && res.status === 'SUCCESS') {
           const embed = Embeds.attendanceReport("Daily Attendance Scanned", targetDate, res);
-          return loading.edit({ content: null, embeds: [embed] });
+          const ChannelHelper = require('../../utils/channelHelper');
+          const destChannel = ChannelHelper.findChannel(message.guild, 'ATTENDANCE');
+
+          if (destChannel && destChannel.id !== message.channel.id) {
+            await destChannel.send({ embeds: [embed] }).catch(() => {});
+            const receiptEmbed = Embeds.success(
+              "Daily Attendance Processed & Published! 📅",
+              `✅ Scanned **${res.formTabScanned || 'Daily Attendance'}** tab for \`${targetDate}\` and recorded scores.\n\n` +
+              `• **Present (+1 pt):** **${res.present}**\n` +
+              `• **Absent (-1 pt):** **${res.absent}**\n` +
+              `• **Approved Leave (0 pt):** **${res.leave}**\n` +
+              `• **Total Active Students:** **${res.totalActive}**\n\n` +
+              `📢 **Full Student Attendance Report has been posted to <#${destChannel.id}>**`
+            );
+            return loading.edit({ content: null, embeds: [receiptEmbed] });
+          } else {
+            return loading.edit({ content: null, embeds: [embed] });
+          }
         } else {
           return loading.edit({ content: null, embeds: [Embeds.error("Scan Failed", res.error || "Failed to scan attendance tab.")] });
         }
@@ -62,11 +79,15 @@ module.exports = {
     if (commandName === 'repairattendance') {
       const loading = await message.reply("⚙️ Repairing attendance matrix and aligning records...");
       try {
-        // Trigger Apps Script repair
-        await loading.edit({
-          content: null,
-          embeds: [Embeds.success("Attendance Matrix Repaired", "Synchronized all student columns, preserved Remarks, and cleared duplicate dates.")]
-        });
+        const res = await GasClient.repairAttendance(guildId);
+        if (res && res.status === 'SUCCESS') {
+          await loading.edit({
+            content: null,
+            embeds: [Embeds.success("Attendance Matrix Repaired", `✅ Synchronized **${res.syncedStudents || 0}** active students into \`Attendance\` tab.\n✅ Aligned **${res.totalSessions || 0}** recorded session dates with preserved Remarks.`)]
+          });
+        } else {
+          await loading.edit({ content: null, embeds: [Embeds.error("Repair Failed", res?.error || "Failed to repair attendance matrix.")] });
+        }
       } catch (err) {
         await loading.edit({ content: null, embeds: [Embeds.error("Repair Failed", err.message)] });
       }

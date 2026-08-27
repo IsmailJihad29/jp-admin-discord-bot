@@ -6,7 +6,7 @@
  * =========================================================================
  */
 
-var SCRIPT_VERSION = "v48";
+var SCRIPT_VERSION = "v50";
 var CONFIG = {
   SECRET_KEY: "JP_ADMIN_26", // Synced with .env DEFAULT_GAS_SECRET
   TIMEZONE: "Asia/Dhaka"
@@ -27,7 +27,8 @@ var SCHEMA_DEFS = {
   "Job_Sheets": ["Discord ID", "Name", "Email", "Sheet URL", "Sheet ID", "Tab GID", "Status", "Last Scraped"],
   "Jobs_Daily": ["Date", "Email", "Count", "Name", "Discord ID", "Total Rows", "New Rows", "Points"],
   "Interview_Log": ["Logged Date", "Name", "Discord ID", "Company", "Serial", "Interview Date", "Role Details", "Discord Link", "Timestamp"],
-  "Job_Tasks": ["Task ID", "Timestamp", "Discord ID", "Student Name", "Company", "Role", "Tech Stack", "Deadline", "Submission Status", "GitHub Link", "Task Link", "Description Link", "Submitted At", "Mentor Status", "Mentor Note", "Points Awarded"]
+  "Job_Tasks": ["Task ID", "Timestamp", "Discord ID", "Student Name", "Company", "Role", "Tech Stack", "Deadline", "Submission Status", "GitHub Link", "Task Link", "Description Link", "Submitted At", "Mentor Status", "Mentor Note", "Points Awarded"],
+  "Holidays": ["Start Date", "End Date", "Holiday Title", "Logged By", "Created At"]
 };
 
 // List of legacy/old sheets that should be removed if cleanup is requested
@@ -113,11 +114,26 @@ function doPost(e) {
       case "recordAttendance":
         return jsonResponse(recordAttendanceSession(ss, data));
 
+      case "repairAttendance":
+        return jsonResponse(repairAttendanceMatrix(ss));
+
       case "scanDailyAttendance":
         return jsonResponse(scanDailyAttendanceFromForm(ss, data.date));
 
       case "scanMorningAttendance":
         return jsonResponse(scanMorningAttendanceFromForm(ss, data.date));
+
+      case "scanCustomAttendance":
+        return jsonResponse(scanCustomAttendanceFromForm(ss, data.tabName, data.date, data.sessionLabel));
+
+      case "getHolidays":
+        return jsonResponse(getHolidaysData(ss));
+
+      case "setHoliday":
+        return jsonResponse(setHolidayData(ss, data));
+
+      case "removeHoliday":
+        return jsonResponse(removeHolidayData(ss, data.date));
 
       case "submitLeave":
         return jsonResponse(submitLeaveRequest(ss, data));
@@ -130,6 +146,9 @@ function doPost(e) {
 
       case "recordJobSheet":
         return jsonResponse(recordJobSheetUrl(ss, data));
+
+      case "getJobSheets":
+        return jsonResponse(getJobSheetsList(ss));
 
       case "recordJobDaily":
         return jsonResponse(recordJobDailyEntry(ss, data));
@@ -157,6 +176,9 @@ function doPost(e) {
 
       case "auditOverdueTasks":
         return jsonResponse(auditOverdueTasksBatch(ss));
+
+      case "initCommandManual":
+        return jsonResponse(setupBotCommandsManualTab(ss));
 
       default:
         return errorResponse("Unknown action: " + action, 400);
@@ -621,26 +643,206 @@ function setStudentStatusData(ss, discordId, status, note) {
  * 5. Attendance & Form Operations
  * -------------------------------------------------------------------------
  */
+
+/**
+ * Helper to parse any date value (Date object, timestamp string, DD/MM/YYYY, MM/DD/YYYY, YYYY-MM-DD) into standard YYYY-MM-DD
+ */
+function parseDateToYMD(val, timezone) {
+  if (!val) return "";
+  var tz = timezone || CONFIG.TIMEZONE;
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, tz, "yyyy-MM-dd");
+  }
+  var s = String(val).trim();
+  if (!s) return "";
+
+  // Check YYYY-MM-DD or YYYY/MM/DD
+  var ymd = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (ymd) {
+    var y = ymd[1];
+    var m = ("0" + ymd[2]).slice(-2);
+    var d = ("0" + ymd[3]).slice(-2);
+    return y + "-" + m + "-" + d;
+  }
+
+  // Check DD/MM/YYYY or MM/DD/YYYY or DD-MM-YYYY
+  var dmy = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (dmy) {
+    var p1 = parseInt(dmy[1], 10);
+    var p2 = parseInt(dmy[2], 10);
+    var yr = dmy[3];
+    var mo = "";
+    var day = "";
+    if (p1 > 12) {
+      // Must be DD/MM/YYYY
+      day = ("0" + p1).slice(-2);
+      mo = ("0" + p2).slice(-2);
+    } else if (p2 > 12) {
+      // Must be MM/DD/YYYY
+      mo = ("0" + p1).slice(-2);
+      day = ("0" + p2).slice(-2);
+    } else {
+      // Form submissions default
+      day = ("0" + p2).slice(-2);
+      mo = ("0" + p1).slice(-2);
+    }
+    return yr + "-" + mo + "-" + day;
+  }
+
+  var dObj = new Date(s);
+  if (!isNaN(dObj.getTime())) {
+    return Utilities.formatDate(dObj, tz, "yyyy-MM-dd");
+  }
+
+  return s.substring(0, 10);
+}
+
+/**
+ * Helper to dynamically locate a sheet tab by primary names or regex pattern
+ */
+function findSheetByPattern(ss, primaryNames, regexPattern) {
+  for (var i = 0; i < primaryNames.length; i++) {
+    var s = ss.getSheetByName(primaryNames[i]);
+    if (s) return s;
+  }
+  var allSheets = ss.getSheets();
+  for (var j = 0; j < allSheets.length; j++) {
+    var name = allSheets[j].getName().trim();
+    if (regexPattern && regexPattern.test(name)) {
+      return allSheets[j];
+    }
+  }
+  return null;
+}
+
+/**
+ * Ensures all students present in Bot_Map have corresponding rows in Attendance sheet
+ */
+function syncAttendanceRosterStudents(ss) {
+  var botMapSheet = ss.getSheetByName("Bot_Map");
+  var attendanceSheet = ss.getSheetByName("Attendance");
+
+  if (!attendanceSheet) {
+    setupAllRequiredSheets(ss);
+    attendanceSheet = ss.getSheetByName("Attendance");
+  }
+  if (!botMapSheet || !attendanceSheet) return;
+
+  var botMapValues = botMapSheet.getDataRange().getValues();
+  var attRange = attendanceSheet.getDataRange();
+  var attValues = attRange.getValues();
+
+  var existingIds = {};
+  var existingEmails = {};
+
+  for (var r = 1; r < attValues.length; r++) {
+    var dId = String(attValues[r][3] || "").trim();
+    var email = String(attValues[r][1] || "").toLowerCase().trim();
+    if (dId) existingIds[dId] = true;
+    if (email) existingEmails[email] = true;
+  }
+
+  var newRows = [];
+  var lastCol = Math.max(attendanceSheet.getLastColumn(), 6);
+
+  for (var b = 1; b < botMapValues.length; b++) {
+    var bEmail = String(botMapValues[b][0] || "").toLowerCase().trim();
+    var bName = String(botMapValues[b][1] || "").trim();
+    var bId = String(botMapValues[b][3] || "").trim();
+    var bStatus = String(botMapValues[b][4] || "active").toLowerCase().trim();
+    var bPhone = String(botMapValues[b][7] || "").trim();
+
+    // STRICT EXCLUSION: Never add Supervisors, Mentors, or Staff to student Attendance matrix!
+    if (bStatus === 'supervisor' || bStatus === 'mentor' || bStatus === 'staff') {
+      continue;
+    }
+
+    if ((bId && !existingIds[bId]) || (bEmail && !existingEmails[bEmail])) {
+      var row = [bName, bEmail, bPhone, bId, bStatus, ""];
+      while (row.length < lastCol) {
+        row.push("A");
+      }
+      newRows.push(row);
+      if (bId) existingIds[bId] = true;
+      if (bEmail) existingEmails[bEmail] = true;
+    }
+  }
+
+  if (newRows.length > 0) {
+    attendanceSheet.getRange(attendanceSheet.getLastRow() + 1, 1, newRows.length, newRows[0].length).setValues(newRows);
+  }
+}
+
+/**
+ * Repairs attendance matrix, synchronizes roster, and normalizes column headers
+ */
+function repairAttendanceMatrix(ss) {
+  var sheet = ss.getSheetByName("Attendance");
+  if (!sheet) {
+    setupAllRequiredSheets(ss);
+    sheet = ss.getSheetByName("Attendance");
+  }
+
+  syncAttendanceRosterStudents(ss);
+
+  var values = sheet.getDataRange().getValues();
+  if (values.length <= 1) {
+    return { status: "SUCCESS", syncedStudents: 0, totalSessions: 0 };
+  }
+
+  var headers = values[0];
+  var normalizedHeaders = [];
+  for (var c = 0; c < headers.length; c++) {
+    if (c < 6) {
+      normalizedHeaders.push(headers[c]);
+    } else {
+      var h = headers[c];
+      var str = (h instanceof Date) ? Utilities.formatDate(h, CONFIG.TIMEZONE, "yyyy-MM-dd") : String(h || "").trim();
+      normalizedHeaders.push(str);
+    }
+  }
+
+  sheet.getRange(1, 1, 1, normalizedHeaders.length).setNumberFormat("@").setValues([normalizedHeaders]);
+
+  return {
+    status: "SUCCESS",
+    syncedStudents: values.length - 1,
+    totalSessions: Math.max(0, headers.length - 6)
+  };
+}
+
 function recordAttendanceSession(ss, data) {
   var sheet = ss.getSheetByName("Attendance");
   if (!sheet) return { error: "Attendance sheet not found" };
 
-  var dateStr = data.date || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
+  // Always ensure all roster students are present in Attendance sheet
+  syncAttendanceRosterStudents(ss);
+
+  var dateStr = String(data.date || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd")).trim();
   var records = data.records || []; // array of { email, discordId, status: 'P' | 'L' | 'A' }
 
-  var headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 6)).getValues()[0];
+  var lastCol = Math.max(sheet.getLastColumn(), 6);
+  var headerValues = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
   var dateColIndex = -1;
 
-  for (var c = 6; c < headers.length; c++) {
-    if (String(headers[c]) === dateStr) {
+  for (var c = 6; c < headerValues.length; c++) {
+    var hVal = headerValues[c];
+    var hStr = "";
+    if (hVal instanceof Date) {
+      hStr = Utilities.formatDate(hVal, CONFIG.TIMEZONE, "yyyy-MM-dd");
+    } else {
+      hStr = String(hVal || "").trim();
+    }
+
+    if (hStr.toLowerCase() === dateStr.toLowerCase()) {
       dateColIndex = c + 1;
       break;
     }
   }
 
   if (dateColIndex === -1) {
-    dateColIndex = headers.length + 1;
-    sheet.getRange(1, dateColIndex).setValue(dateStr).setFontWeight("bold");
+    dateColIndex = lastCol + 1;
+    sheet.getRange(1, dateColIndex).setNumberFormat("@").setValue(dateStr).setFontWeight("bold").setBackground("#e2e8f0");
   }
 
   var values = sheet.getDataRange().getValues();
@@ -653,26 +855,48 @@ function recordAttendanceSession(ss, data) {
   }
 
   var updatedCount = 0;
+  var colUpdates = [];
+  for (var i = 1; i < values.length; i++) {
+    var currentCell = values[i][dateColIndex - 1];
+    colUpdates.push([currentCell !== undefined && currentCell !== "" ? currentCell : "A"]);
+  }
+
   records.forEach(function(rec) {
-    var targetRow = idToRow["id:" + rec.discordId] || idToRow["email:" + String(rec.email).toLowerCase()];
-    if (targetRow) {
-      sheet.getRange(targetRow, dateColIndex).setValue(rec.status);
+    var targetRow = (rec.discordId ? idToRow["id:" + rec.discordId] : null) || (rec.email ? idToRow["email:" + String(rec.email).toLowerCase()] : null);
+    if (targetRow && targetRow >= 2 && targetRow <= values.length) {
+      colUpdates[targetRow - 2][0] = rec.status;
       updatedCount++;
     }
   });
 
-  return { status: "SUCCESS", date: dateStr, updatedStudents: updatedCount };
+  if (colUpdates.length > 0) {
+    sheet.getRange(2, dateColIndex, colUpdates.length, 1).setValues(colUpdates);
+  }
+
+  return { status: "SUCCESS", date: dateStr, updatedStudents: updatedCount, colIndex: dateColIndex };
 }
 
 function getAttendanceData(ss) {
   var sheet = ss.getSheetByName("Attendance");
-  if (!sheet || sheet.getLastRow() <= 1) return { attendance: [] };
+  if (!sheet || sheet.getLastRow() <= 1) return { dates: [], rows: [] };
 
   var values = sheet.getDataRange().getValues();
   var headers = values[0];
-  var dates = headers.slice(6);
-  var rows = [];
+  var dates = [];
 
+  for (var c = 6; c < headers.length; c++) {
+    var hVal = headers[c];
+    if (!hVal) continue;
+    var dStr = "";
+    if (hVal instanceof Date) {
+      dStr = Utilities.formatDate(hVal, CONFIG.TIMEZONE, "yyyy-MM-dd");
+    } else {
+      dStr = String(hVal).trim();
+    }
+    dates.push(dStr);
+  }
+
+  var rows = [];
   for (var i = 1; i < values.length; i++) {
     var row = values[i];
     var sessionMarks = {};
@@ -699,30 +923,38 @@ function getAttendanceData(ss) {
 function scanDailyAttendanceFromForm(ss, dateStr) {
   var targetDate = dateStr || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
 
-  var formSheet = ss.getSheetByName("Daily Attendance") ||
-                  ss.getSheetByName("Attendance Responses") ||
-                  ss.getSheetByName("Form Responses 1");
-
+  var formSheet = findSheetByPattern(ss, ["Daily Attendance", "Daily_Attendance", "Attendance Responses", "Form Responses 1"], /(daily|attendance\s*response|form\s*response)/i);
   var botMapSheet = ss.getSheetByName("Bot_Map");
   var attendanceSheet = ss.getSheetByName("Attendance");
   var leaveSheet = ss.getSheetByName("Leave_Requests");
 
-  if (!botMapSheet || !attendanceSheet) {
-    return { error: "Required sheets (Bot_Map / Attendance) not found" };
+  if (!formSheet) {
+    var tabNames = ss.getSheets().map(function(s) { return s.getName(); });
+    return {
+      status: "FAILED",
+      error: "Google Form 'Daily Attendance' response tab not found in spreadsheet. Available tabs: " + tabNames.join(", ")
+    };
   }
 
-  // 1. Get active students
+  if (!botMapSheet || !attendanceSheet) {
+    setupAllRequiredSheets(ss);
+    botMapSheet = ss.getSheetByName("Bot_Map");
+    attendanceSheet = ss.getSheetByName("Attendance");
+  }
+
+  // 1. Get active students from Bot_Map
   var botMapValues = botMapSheet.getDataRange().getValues();
   var students = [];
   for (var i = 1; i < botMapValues.length; i++) {
     var email = String(botMapValues[i][0] || "").toLowerCase().trim();
     var name = String(botMapValues[i][1] || "").trim();
-    var uName = String(botMapValues[i][2] || "").toLowerCase().trim().replace(/^@/, '');
+    var uName = String(botMapValues[i][2] || "").toLowerCase().trim().replace(/^@/, '').split('#')[0].trim();
     var dId = String(botMapValues[i][3] || "").trim();
     var status = String(botMapValues[i][4] || "active").toLowerCase().trim();
+    var phone = String(botMapValues[i][7] || "").replace(/[^0-9]/g, '');
 
     if (dId && status === 'active') {
-      students.push({ email: email, name: name, username: uName, discordId: dId, rowIdx: i + 1 });
+      students.push({ email: email, name: name, username: uName, discordId: dId, phone: phone, rowIdx: i + 1 });
     }
   }
 
@@ -732,8 +964,8 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
     var leaveValues = leaveSheet.getDataRange().getValues();
     for (var l = 1; l < leaveValues.length; l++) {
       var lDiscordId = String(leaveValues[l][2] || "").trim();
-      var lStart = String(leaveValues[l][5] || "").trim();
-      var lEnd = String(leaveValues[l][6] || "").trim();
+      var lStart = parseDateToYMD(leaveValues[l][5]);
+      var lEnd = parseDateToYMD(leaveValues[l][6]);
       var lStatus = String(leaveValues[l][8] || "").trim().toLowerCase();
 
       if (lStatus === 'approved' && lDiscordId) {
@@ -744,25 +976,27 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
     }
   }
 
-  // 3. Scan Form responses
+  // 3. Scan Form responses with robust date parsing & matching
   var presentSubmissions = {};
+  var matchedSubmissionsCount = 0;
   if (formSheet && formSheet.getLastRow() > 1) {
     var formValues = formSheet.getDataRange().getValues();
     for (var f = 1; f < formValues.length; f++) {
       var row = formValues[f];
       var rawTimestamp = row[0];
-      var rowDate = "";
-      if (rawTimestamp instanceof Date) {
-        rowDate = Utilities.formatDate(rawTimestamp, CONFIG.TIMEZONE, "yyyy-MM-dd");
-      } else {
-        rowDate = String(rawTimestamp || "").substring(0, 10);
-      }
+      var rowDate = parseDateToYMD(rawTimestamp);
 
       if (rowDate === targetDate || !dateStr) {
+        matchedSubmissionsCount++;
         for (var c = 0; c < row.length; c++) {
-          var cellVal = String(row[c] || "").toLowerCase().trim().replace(/^@/, '');
-          if (cellVal) {
-            presentSubmissions[cellVal] = true;
+          var rawVal = String(row[c] || "").trim();
+          if (rawVal) {
+            var cellLower = rawVal.toLowerCase().replace(/^@/, '').split('#')[0].trim();
+            presentSubmissions[cellLower] = true;
+            var numOnly = rawVal.replace(/[^0-9]/g, '');
+            if (numOnly.length >= 7) {
+              presentSubmissions[numOnly] = true;
+            }
           }
         }
       }
@@ -777,9 +1011,11 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
 
   students.forEach(function(s) {
     var isPresent = false;
-    if (s.email && presentSubmissions[s.email.toLowerCase()]) isPresent = true;
-    if (s.username && presentSubmissions[s.username.toLowerCase()]) isPresent = true;
+    if (s.email && presentSubmissions[s.email]) isPresent = true;
+    if (s.username && presentSubmissions[s.username]) isPresent = true;
     if (s.discordId && presentSubmissions[s.discordId]) isPresent = true;
+    if (s.phone && presentSubmissions[s.phone]) isPresent = true;
+    if (s.name && presentSubmissions[s.name.toLowerCase()]) isPresent = true;
 
     var status = 'A';
     var pts = -1;
@@ -811,7 +1047,10 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
 
   return {
     status: "SUCCESS",
+    session: "Daily",
     date: targetDate,
+    formTabScanned: formSheet.getName(),
+    matchedFormSubmissions: matchedSubmissionsCount,
     totalActive: students.length,
     present: presentCount,
     absent: absentCount,
@@ -827,29 +1066,38 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
   var targetDate = dateStr || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
   var colDate = targetDate + " (Morning)";
 
-  var formSheet = ss.getSheetByName("Morning Attendance") ||
-                  ss.getSheetByName("Morning_Attendance");
-
+  var formSheet = findSheetByPattern(ss, ["Morning Attendance", "Morning_Attendance"], /morning/i);
   var botMapSheet = ss.getSheetByName("Bot_Map");
   var attendanceSheet = ss.getSheetByName("Attendance");
   var leaveSheet = ss.getSheetByName("Leave_Requests");
 
-  if (!botMapSheet || !attendanceSheet) {
-    return { error: "Required sheets (Bot_Map / Attendance) not found" };
+  if (!formSheet) {
+    var tabNames = ss.getSheets().map(function(s) { return s.getName(); });
+    return {
+      status: "FAILED",
+      error: "Google Form 'Morning Attendance' response tab not found in spreadsheet. Available tabs: " + tabNames.join(", ")
+    };
   }
 
-  // 1. Get active students
+  if (!botMapSheet || !attendanceSheet) {
+    setupAllRequiredSheets(ss);
+    botMapSheet = ss.getSheetByName("Bot_Map");
+    attendanceSheet = ss.getSheetByName("Attendance");
+  }
+
+  // 1. Get active students from Bot_Map
   var botMapValues = botMapSheet.getDataRange().getValues();
   var students = [];
   for (var i = 1; i < botMapValues.length; i++) {
     var email = String(botMapValues[i][0] || "").toLowerCase().trim();
     var name = String(botMapValues[i][1] || "").trim();
-    var uName = String(botMapValues[i][2] || "").toLowerCase().trim().replace(/^@/, '');
+    var uName = String(botMapValues[i][2] || "").toLowerCase().trim().replace(/^@/, '').split('#')[0].trim();
     var dId = String(botMapValues[i][3] || "").trim();
     var status = String(botMapValues[i][4] || "active").toLowerCase().trim();
+    var phone = String(botMapValues[i][7] || "").replace(/[^0-9]/g, '');
 
     if (dId && status === 'active') {
-      students.push({ email: email, name: name, username: uName, discordId: dId, rowIdx: i + 1 });
+      students.push({ email: email, name: name, username: uName, discordId: dId, phone: phone, rowIdx: i + 1 });
     }
   }
 
@@ -859,8 +1107,8 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
     var leaveValues = leaveSheet.getDataRange().getValues();
     for (var l = 1; l < leaveValues.length; l++) {
       var lDiscordId = String(leaveValues[l][2] || "").trim();
-      var lStart = String(leaveValues[l][5] || "").trim();
-      var lEnd = String(leaveValues[l][6] || "").trim();
+      var lStart = parseDateToYMD(leaveValues[l][5]);
+      var lEnd = parseDateToYMD(leaveValues[l][6]);
       var lStatus = String(leaveValues[l][8] || "").trim().toLowerCase();
 
       if (lStatus === 'approved' && lDiscordId) {
@@ -871,25 +1119,27 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
     }
   }
 
-  // 3. Scan Morning Form responses
+  // 3. Scan Morning Form responses with robust date parsing & matching
   var presentSubmissions = {};
+  var matchedSubmissionsCount = 0;
   if (formSheet && formSheet.getLastRow() > 1) {
     var formValues = formSheet.getDataRange().getValues();
     for (var f = 1; f < formValues.length; f++) {
       var row = formValues[f];
       var rawTimestamp = row[0];
-      var rowDate = "";
-      if (rawTimestamp instanceof Date) {
-        rowDate = Utilities.formatDate(rawTimestamp, CONFIG.TIMEZONE, "yyyy-MM-dd");
-      } else {
-        rowDate = String(rawTimestamp || "").substring(0, 10);
-      }
+      var rowDate = parseDateToYMD(rawTimestamp);
 
       if (rowDate === targetDate || !dateStr) {
+        matchedSubmissionsCount++;
         for (var c = 0; c < row.length; c++) {
-          var cellVal = String(row[c] || "").toLowerCase().trim().replace(/^@/, '');
-          if (cellVal) {
-            presentSubmissions[cellVal] = true;
+          var rawVal = String(row[c] || "").trim();
+          if (rawVal) {
+            var cellLower = rawVal.toLowerCase().replace(/^@/, '').split('#')[0].trim();
+            presentSubmissions[cellLower] = true;
+            var numOnly = rawVal.replace(/[^0-9]/g, '');
+            if (numOnly.length >= 7) {
+              presentSubmissions[numOnly] = true;
+            }
           }
         }
       }
@@ -904,9 +1154,11 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
 
   students.forEach(function(s) {
     var isPresent = false;
-    if (s.email && presentSubmissions[s.email.toLowerCase()]) isPresent = true;
-    if (s.username && presentSubmissions[s.username.toLowerCase()]) isPresent = true;
+    if (s.email && presentSubmissions[s.email]) isPresent = true;
+    if (s.username && presentSubmissions[s.username]) isPresent = true;
     if (s.discordId && presentSubmissions[s.discordId]) isPresent = true;
+    if (s.phone && presentSubmissions[s.phone]) isPresent = true;
+    if (s.name && presentSubmissions[s.name.toLowerCase()]) isPresent = true;
 
     var status = 'A';
     var pts = -1;
@@ -941,11 +1193,250 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
     session: "Morning",
     date: targetDate,
     colHeader: colDate,
+    formTabScanned: formSheet.getName(),
+    matchedFormSubmissions: matchedSubmissionsCount,
     totalActive: students.length,
     present: presentCount,
     absent: absentCount,
     leave: leaveCount,
     records: attendanceRecords
+  };
+}
+
+/**
+ * Custom Attendance Scanner from any specified sheet/tab
+ */
+function scanCustomAttendanceFromForm(ss, customTabName, dateStr, customLabel) {
+  if (!customTabName) {
+    return {
+      status: "FAILED",
+      error: "No custom sheet/tab name was provided."
+    };
+  }
+
+  var targetDate = dateStr || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
+
+  // Search for the custom tab
+  var formSheet = ss.getSheetByName(customTabName);
+  if (!formSheet) {
+    var rx = new RegExp(customTabName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    formSheet = findSheetByPattern(ss, [customTabName], rx);
+  }
+
+  if (!formSheet) {
+    var tabNames = ss.getSheets().map(function(s) { return s.getName(); });
+    return {
+      status: "FAILED",
+      error: "Tab '" + customTabName + "' not found in spreadsheet. Available tabs: " + tabNames.join(", ")
+    };
+  }
+
+  var botMapSheet = ss.getSheetByName("Bot_Map");
+  var attendanceSheet = ss.getSheetByName("Attendance");
+  var leaveSheet = ss.getSheetByName("Leave_Requests");
+
+  if (!botMapSheet || !attendanceSheet) {
+    setupAllRequiredSheets(ss);
+    botMapSheet = ss.getSheetByName("Bot_Map");
+    attendanceSheet = ss.getSheetByName("Attendance");
+  }
+
+  // 1. Get active students from Bot_Map (excluding staff/mentors/supervisors)
+  var botMapValues = botMapSheet.getDataRange().getValues();
+  var students = [];
+  for (var i = 1; i < botMapValues.length; i++) {
+    var email = String(botMapValues[i][0] || "").toLowerCase().trim();
+    var name = String(botMapValues[i][1] || "").trim();
+    var uName = String(botMapValues[i][2] || "").toLowerCase().trim().replace(/^@/, '').split('#')[0].trim();
+    var dId = String(botMapValues[i][3] || "").trim();
+    var status = String(botMapValues[i][4] || "active").toLowerCase().trim();
+    var phone = String(botMapValues[i][7] || "").replace(/[^0-9]/g, '');
+
+    if (dId && status === 'active') {
+      students.push({ email: email, name: name, username: uName, discordId: dId, phone: phone, rowIdx: i + 1 });
+    }
+  }
+
+  // 2. Approved leaves
+  var approvedLeaves = {};
+  if (leaveSheet && leaveSheet.getLastRow() > 1) {
+    var leaveValues = leaveSheet.getDataRange().getValues();
+    for (var l = 1; l < leaveValues.length; l++) {
+      var lDiscordId = String(leaveValues[l][2] || "").trim();
+      var lStart = parseDateToYMD(leaveValues[l][5]);
+      var lEnd = parseDateToYMD(leaveValues[l][6]);
+      var lStatus = String(leaveValues[l][8] || "").trim().toLowerCase();
+
+      if (lStatus === 'approved' && lDiscordId) {
+        if (targetDate >= lStart && targetDate <= lEnd) {
+          approvedLeaves[lDiscordId] = true;
+        }
+      }
+    }
+  }
+
+  // 3. Scan custom form responses
+  var presentSubmissions = {};
+  var matchedSubmissionsCount = 0;
+  if (formSheet && formSheet.getLastRow() > 1) {
+    var formValues = formSheet.getDataRange().getValues();
+    for (var f = 1; f < formValues.length; f++) {
+      var row = formValues[f];
+      var rawTimestamp = row[0];
+      var rowDate = parseDateToYMD(rawTimestamp);
+
+      if (rowDate === targetDate || !dateStr) {
+        matchedSubmissionsCount++;
+        for (var c = 0; c < row.length; c++) {
+          var rawVal = String(row[c] || "").trim();
+          if (rawVal) {
+            var cellLower = rawVal.toLowerCase().replace(/^@/, '').split('#')[0].trim();
+            presentSubmissions[cellLower] = true;
+            var numOnly = rawVal.replace(/[^0-9]/g, '');
+            if (numOnly.length >= 7) {
+              presentSubmissions[numOnly] = true;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 4. Calculate status
+  var presentCount = 0;
+  var absentCount = 0;
+  var leaveCount = 0;
+  var attendanceRecords = [];
+
+  students.forEach(function(s) {
+    var isPresent = false;
+    if (s.email && presentSubmissions[s.email]) isPresent = true;
+    if (s.username && presentSubmissions[s.username]) isPresent = true;
+    if (s.discordId && presentSubmissions[s.discordId]) isPresent = true;
+    if (s.phone && presentSubmissions[s.phone]) isPresent = true;
+    if (s.name && presentSubmissions[s.name.toLowerCase()]) isPresent = true;
+
+    var status = 'A';
+    var pts = -1;
+
+    if (isPresent) {
+      status = 'P';
+      pts = 1;
+      presentCount++;
+    } else if (approvedLeaves[s.discordId]) {
+      status = 'L';
+      pts = 0;
+      leaveCount++;
+    } else {
+      status = 'A';
+      pts = -1;
+      absentCount++;
+    }
+
+    attendanceRecords.push({
+      discordId: s.discordId,
+      name: s.name,
+      email: s.email,
+      status: status,
+      points: pts
+    });
+  });
+
+  var label = customLabel || formSheet.getName().replace(/Attendance|Responses|Form/gi, '').trim() || "Custom";
+  var colHeader = targetDate + " (" + label + ")";
+
+  recordAttendanceSession(ss, { date: colHeader, records: attendanceRecords });
+
+  return {
+    status: "SUCCESS",
+    session: label,
+    date: targetDate,
+    colHeader: colHeader,
+    formTabScanned: formSheet.getName(),
+    matchedFormSubmissions: matchedSubmissionsCount,
+    totalActive: students.length,
+    present: presentCount,
+    absent: absentCount,
+    leave: leaveCount,
+    records: attendanceRecords
+  };
+}
+
+/**
+ * -------------------------------------------------------------------------
+ * Holidays & Offdays Management
+ * -------------------------------------------------------------------------
+ */
+function getHolidaysData(ss) {
+  var sheet = ss.getSheetByName("Holidays");
+  if (!sheet || sheet.getLastRow() <= 1) return { holidays: [] };
+
+  var values = sheet.getDataRange().getValues();
+  var holidays = [];
+  for (var i = 1; i < values.length; i++) {
+    var sDate = parseDateToYMD(values[i][0]);
+    var eDate = parseDateToYMD(values[i][1]) || sDate;
+    var title = String(values[i][2] || "Offday").trim();
+    var loggedBy = String(values[i][3] || "").trim();
+    var createdAt = String(values[i][4] || "").trim();
+
+    if (sDate) {
+      holidays.push({
+        startDate: sDate,
+        endDate: eDate,
+        title: title,
+        loggedBy: loggedBy,
+        createdAt: createdAt
+      });
+    }
+  }
+  return { holidays: holidays };
+}
+
+function setHolidayData(ss, data) {
+  var sheet = ss.getSheetByName("Holidays");
+  if (!sheet) {
+    setupAllRequiredSheets(ss);
+    sheet = ss.getSheetByName("Holidays");
+  }
+
+  var sDate = parseDateToYMD(data.startDate) || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
+  var eDate = parseDateToYMD(data.endDate) || sDate;
+  var title = data.title || "Offday / Holiday";
+  var loggedBy = data.loggedBy || "Mentor";
+  var createdAt = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+
+  sheet.appendRow([sDate, eDate, title, loggedBy, createdAt]);
+
+  return {
+    status: "SUCCESS",
+    startDate: sDate,
+    endDate: eDate,
+    title: title
+  };
+}
+
+function removeHolidayData(ss, dateStr) {
+  var sheet = ss.getSheetByName("Holidays");
+  if (!sheet || sheet.getLastRow() <= 1) return { status: "SUCCESS", removedCount: 0 };
+
+  var targetDate = parseDateToYMD(dateStr);
+  var values = sheet.getDataRange().getValues();
+  var removed = 0;
+
+  for (var i = values.length - 1; i >= 1; i--) {
+    var sDate = parseDateToYMD(values[i][0]);
+    var eDate = parseDateToYMD(values[i][1]) || sDate;
+    if (sDate === targetDate || (targetDate >= sDate && targetDate <= eDate)) {
+      sheet.deleteRow(i + 1);
+      removed++;
+    }
+  }
+
+  return {
+    status: "SUCCESS",
+    removedCount: removed,
+    date: dateStr
   };
 }
 
@@ -1072,6 +1563,33 @@ function recordJobSheetUrl(ss, data) {
     ]);
     return { status: "CREATED", row: sheet.getLastRow() };
   }
+}
+
+function getJobSheetsList(ss) {
+  var sheet = ss.getSheetByName("Job_Sheets");
+  if (!sheet || sheet.getLastRow() <= 1) return { sheets: [] };
+
+  var values = sheet.getDataRange().getValues();
+  var sheets = [];
+
+  for (var i = 1; i < values.length; i++) {
+    var row = values[i];
+    var dId = String(row[0] || "").trim();
+    if (dId) {
+      sheets.push({
+        discordId: dId,
+        name: String(row[1] || ""),
+        email: String(row[2] || ""),
+        sheetUrl: String(row[3] || ""),
+        sheetId: String(row[4] || ""),
+        gid: String(row[5] || "0"),
+        status: String(row[6] || "Active"),
+        lastScraped: String(row[7] || "")
+      });
+    }
+  }
+
+  return { sheets: sheets };
 }
 
 function recordJobDailyEntry(ss, data) {
@@ -1355,4 +1873,97 @@ function auditOverdueTasksBatch(ss) {
   }
 
   return { status: "SUCCESS", overdueCount: overdueList.length, overdue: overdueList };
+}
+
+/**
+ * -------------------------------------------------------------------------
+ * 10. Automated Bot Commands Manual Tab Generator in Google Sheets
+ * -------------------------------------------------------------------------
+ */
+function setupBotCommandsManualTab(ss) {
+  var sheetName = "Bot_Commands";
+  var sheet = ss.getSheetByName(sheetName);
+
+  if (sheet) {
+    sheet.clear();
+  } else {
+    sheet = ss.insertSheet(sheetName);
+  }
+
+  var headers = ["Category", "Command", "Aliases", "Allowed Role", "Designated Channel", "Syntax & Example", "Description"];
+  var rows = [
+    headers,
+    ["1. System & Provisioning", "!setgas", "!gasurl, !gas", "Supervisor", "#jp-admin", "!setgas <Web_App_URL>", "Links Google Apps Script (v50) backend with Discord Server."],
+    ["1. System & Provisioning", "!setupserver", "!scanserver, !setup", "Supervisor", "#jp-admin", "!setupserver", "Provisions categories, roles, and 10+ feature channels with permissions."],
+    ["1. System & Provisioning", "!setchannel", "!customchannel", "Supervisor", "#jp-admin", "!setchannel <KEY> <#channel>", "Binds a custom channel to a bot feature key (e.g. ATTENDANCE, RTBR)."],
+    ["1. System & Provisioning", "!supervisor", "!supervisors, !admin", "Owner / Supervisor", "#jp-admin", "!supervisor <add/remove> @user", "Registers or removes a supervisor."],
+    ["1. System & Provisioning", "!cohorts", "!cohort", "Supervisor", "#jp-admin", "!cohorts", "Displays active cohort settings, GAS URL, and automation status."],
+    ["1. System & Provisioning", "!settrackertemplate", "!trackertemplate", "Supervisor / Mentor", "#jp-admin", "!settrackertemplate <URL>", "Sets the official demo job tracker template Google Sheet copy URL."],
+
+    ["2. Dynamic Points", "!points", "!scoring", "Mentor / Supervisor", "#jp-admin", "!points", "Displays active point weights (Interview, Attendance, Target, Streak, Tasks)."],
+    ["2. Dynamic Points", "!setpoint interview", "!setpoint int", "Mentor / Supervisor", "#jp-admin", "!setpoint interview <pts>", "Customizes interview preparation reward points (e.g. !setpoint interview 10)."],
+    ["2. Dynamic Points", "!setpoint attendance", "!setpoint att", "Mentor / Supervisor", "#jp-admin", "!setpoint attendance <present> [absent]", "Customizes Present and Absent attendance points (e.g. !setpoint attendance 2 -2)."],
+    ["2. Dynamic Points", "!setpoint target", "!setpoint jobtarget", "Mentor / Supervisor", "#jp-admin", "!setpoint target <count>", "Customizes daily mandatory job application target (e.g. !setpoint target 12)."],
+    ["2. Dynamic Points", "!setpoint streak", "!setpoint streaks", "Mentor / Supervisor", "#jp-admin", "!setpoint streak <bonus> [cap]", "Customizes consecutive job application streak bonus and maximum cap."],
+    ["2. Dynamic Points", "!setpoint task", "!setpoint tasks", "Mentor / Supervisor", "#jp-admin", "!setpoint task <ann> <appr> [overdue]", "Customizes job task announced, approved, and overdue penalty points."],
+    ["2. Dynamic Points", "!setpoint reset", "!setpoint default", "Mentor / Supervisor", "#jp-admin", "!setpoint reset", "Restores all point settings to standard defaults."],
+
+    ["3. Attendance Operations", "!morningattendance", "!morningatt", "Mentor / Supervisor", "#jp-admin", "!morningattendance [Date]", "Scans 'Morning Attendance' form tab (+1/-1/0) and posts to #daily-attendance."],
+    ["3. Attendance Operations", "!checkattendance", "!attendance, !att", "Mentor / Supervisor", "#jp-admin", "!checkattendance [Date]", "Scans 'Daily Attendance' form tab (+1/-1/0) and posts to #daily-attendance."],
+    ["3. Attendance Operations", "!customattendance", "!scanfromtab", "Mentor / Supervisor", "#jp-admin", "!customattendance \"<Tab>\" [Date]", "Scans any custom sheet tab for that day and syncs to Attendance matrix."],
+    ["3. Attendance Operations", "!repairattendance", "!fixattendance", "Mentor / Supervisor", "#jp-admin", "!repairattendance", "Repairs broken matrix formatting, syncs roster names, and repairs date headers."],
+    ["3. Attendance Operations", "!absent", "!absentees", "Mentor / Supervisor", "#jp-admin", "!absent [Date]", "Lists absent students for a specific date."],
+
+    ["4. Leaves & Holidays", "!leave", "!applyleave", "Student / Staff", "#leave-request", "!leave", "Opens popup modal form for student leave request submission."],
+    ["4. Leaves & Holidays", "!leaves", "!allleaves", "Mentor / Supervisor", "#jp-admin", "!leaves [pending/approved/rejected]", "Displays all student leave requests with interactive Approve/Reject buttons."],
+    ["4. Leaves & Holidays", "!approve", "!acceptleave", "Mentor / Supervisor", "#jp-admin", "!approve <ReqID>", "Approves a leave request (sets 0 pts for attendance on approved dates)."],
+    ["4. Leaves & Holidays", "!reject", "!deny", "Mentor / Supervisor", "#jp-admin", "!reject <ReqID>", "Rejects a leave request."],
+    ["4. Leaves & Holidays", "!offday today", "!holiday today", "Mentor / Supervisor", "#jp-admin", "!offday today [Reason]", "Declares today an official Offday; announces notice and pauses audits."],
+    ["4. Leaves & Holidays", "!offday <Range>", "!holiday <Range>", "Mentor / Supervisor", "#jp-admin", "!offday YYYY-MM-DD to YYYY-MM-DD", "Schedules vacation date range in Holidays tab and pauses penalties."],
+    ["4. Leaves & Holidays", "!offdays", "!holidays", "Mentor / Supervisor", "#jp-admin", "!offdays", "Displays the full calendar of scheduled offdays and vacations."],
+    ["4. Leaves & Holidays", "!removeoffday", "!clearoffday", "Mentor / Supervisor", "#jp-admin", "!removeoffday <Date>", "Removes an offday and resumes regular automations."],
+
+    ["5. Job Applications & Tasks", "!linksheet", "!trackersheet", "Student / Staff", "#job-tracker", "!linksheet <URL>", "Links personal Google Sheet job application tracker once for daily 23:30 audits."],
+    ["5. Job Applications & Tasks", "!mysheet", "!sheet", "Student / Staff", "#job-tracker", "!mysheet", "Displays student's linked sheet status, total applications, and today count."],
+    ["5. Job Applications & Tasks", "!submit", "!submittask", "Student / Staff", "#jobs-task-updates", "!submit (replying to task)", "Opens popup modal to submit GitHub & Live Demo solutions for hiring tasks."],
+    ["5. Job Applications & Tasks", "!tasks", "!jobtasks", "Mentor / Supervisor", "#jp-admin", "!tasks [pending/all]", "Lists submitted coding tasks with review buttons."],
+    ["5. Job Applications & Tasks", "!review", "!reviewtask", "Mentor / Supervisor", "#jp-admin", "!review <TaskID> <approve/reject>", "Approves (+1 pt) or rejects student job tasks."],
+    ["5. Job Applications & Tasks", "!jobscheck", "!notapplying", "Mentor / Supervisor", "#jp-admin", "!jobscheck", "Lists students who have not met today's daily application target."],
+    ["5. Job Applications & Tasks", "!outreachcheck", "!outreach", "Mentor / Supervisor", "#jp-admin", "!outreachcheck", "Audits student networking and outreach progress."],
+
+    ["6. Student Scorecards & Ranks", "!myhealth", "!myprofile, !me", "Student / Staff", "#dev-health-check", "!myhealth", "Full personal scorecard, rank, attendance, job tracker analytics & mentor advice."],
+    ["6. Student Scorecards & Ranks", "!panelhealth", "!healthpanel", "Mentor / Supervisor", "#dev-health-check", "!panelhealth", "Posts the interactive [ Check My Health & Status ] button in #dev-health-check."],
+    ["6. Student Scorecards & Ranks", "!leaderboard", "!rtbr, !ranks", "Student / Staff", "#referral-leaderboard", "!leaderboard", "Full cohort performance leaderboard with @everyone mention."],
+    ["6. Student Scorecards & Ranks", "!hired", "!gotjob", "Mentor / Supervisor", "#jp-admin", "!hired @student <Company> [Role]", "Broadcasts celebration banner to #successfully-hired and gives Hired role."],
+    ["6. Student Scorecards & Ranks", "!referralaccess", "!referrallock", "Mentor / Supervisor", "#jp-admin", "!referralaccess @student <grant/restrict>", "Unlocks or locks #resume-needed referral drive access."],
+    ["6. Student Scorecards & Ranks", "!atrisk", "!dropouts", "Mentor / Supervisor", "#jp-admin", "!atrisk", "Predicts dropout risk based on rolling 7-day performance data."],
+    ["6. Student Scorecards & Ranks", "!warnings", "!absentwarnings", "Mentor / Supervisor", "#jp-admin", "!warnings", "Lists students with 3+ absences in the current week."],
+    ["6. Student Scorecards & Ranks", "!syncmembers", "!syncroster", "Mentor / Supervisor", "#jp-admin", "!syncmembers", "Synchronizes Discord members with Google Sheet Bot_Map."],
+    ["6. Student Scorecards & Ranks", "!students", "!allstudents", "Mentor / Supervisor", "#jp-admin", "!students", "Lists all active enrolled students."],
+    ["6. Student Scorecards & Ranks", "!studentreport", "!report", "Mentor / Supervisor", "#jp-admin", "!studentreport @student", "Generates comprehensive individual performance diagnostics."],
+
+    ["7. Guidelines & Help", "!posttemplates", "!guidelines", "Mentor / Supervisor", "#jp-admin", "!posttemplates [interview/task/tracker/all]", "Publishes standard copy-paste guidelines and templates to student channels."],
+    ["7. Guidelines & Help", "!mentor", "!giverole", "Supervisor", "#jp-admin", "!mentor <add/remove> @user", "Assigns or removes Mentor role and staff permissions."],
+    ["7. Guidelines & Help", "!doctor", "!diagnose", "Mentor / Supervisor", "#jp-admin", "!doctor", "Full health check of Discord bot, GAS backend v50, and all database sheets."],
+    ["7. Guidelines & Help", "!jp", "!askjp", "Everyone", "Any Channel", "!jp <Your Question>", "AI natural language assistant powered by Google Gemini AI."],
+    ["7. Guidelines & Help", "!help", "!commands", "Everyone", "Any Channel", "!help", "Shows general command help catalog."]
+  ];
+
+  sheet.getRange(1, 1, rows.length, headers.length).setValues(rows);
+
+  // Format Header Row
+  var headerRange = sheet.getRange(1, 1, 1, headers.length);
+  headerRange.setFontWeight("bold");
+  headerRange.setBackground("#1E293B"); // Slate Dark Navy
+  headerRange.setFontColor("#FFFFFF");
+  headerRange.setHorizontalAlignment("center");
+
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, headers.length);
+
+  return {
+    status: "SUCCESS",
+    tabName: sheetName,
+    totalCommandsLogged: rows.length - 1
+  };
 }

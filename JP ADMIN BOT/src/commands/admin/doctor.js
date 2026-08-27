@@ -11,7 +11,7 @@ module.exports = {
   name: 'doctor',
   description: 'Diagnoses bot health, Apps Script v47 backend, tabs, and permissions',
   usage: '!doctor',
-  supervisorOnly: true,
+  mentorOnly: true,
 
   async execute(message, args, client) {
     const loadingMsg = await message.reply("🩺 Running system diagnosis across Discord and Google Apps Script...");

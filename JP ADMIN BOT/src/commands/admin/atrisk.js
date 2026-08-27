@@ -12,7 +12,7 @@ module.exports = {
   aliases: ['dropouts', 'riskreport', 'dropoutpredictor'],
   description: 'Runs multi-signal 7-day trend analysis to identify students at risk of dropping out',
   usage: '!atrisk [dispatch]',
-  supervisorOnly: true,
+  mentorOnly: true,
 
   async execute(message, args, client) {
     const isDispatch = args[0]?.toLowerCase() === 'dispatch';

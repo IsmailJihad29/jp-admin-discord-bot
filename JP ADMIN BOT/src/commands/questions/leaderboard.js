@@ -1,45 +1,68 @@
 /**
- * Commands: !leaderboard, !rtbr, !weeklyreport
+ * Commands: !leaderboard, !rtbr, !weeklyreport, !topstudents
+ * Calculates consolidated performance scores for ALL active students and broadcasts with @everyone mentions
  */
 
 const ScoringService = require('../../services/scoringService');
 const Embeds = require('../../utils/embedBuilder');
+const ChannelHelper = require('../../utils/channelHelper');
+const constants = require('../../config/constants');
 
 module.exports = {
   name: 'leaderboard',
-  aliases: ['rtbr', 'weeklyreport'],
-  description: 'View 7-day rolling Right-To-Be-Referred (RTBR) and performance leaderboards',
+  aliases: ['rtbr', 'weeklyreport', 'topstudents', 'fullleaderboard', 'ranks'],
+  description: 'View 7-day rolling performance and Right-To-Be-Referred (RTBR) leaderboards for all students',
   usage: '!leaderboard | !rtbr | !weeklyreport',
-  supervisorOnly: true,
+  supervisorOnly: false, // Students can view leaderboard
 
   async execute(message, args, client) {
-    const commandName = message.content.slice(1).split(/ +/)[0].toLowerCase();
-    const guildId = message.guild.id;
+    const guild = message.guild;
+    const guildId = guild.id;
 
-    const loading = await message.reply("🏆 Calculating 7-day rolling performance & RTBR scores across Sheet records...");
+    const loading = await message.reply("🏆 Calculating consolidated weekly performance scores across all active students...");
 
     try {
       const standings = await ScoringService.calculateRTBR(guildId);
 
-      if (commandName === 'rtbr') {
-        const top5 = standings.slice(0, 5);
-        const embed = Embeds.leaderboard(
-          "Priority for Referral (RTBR Rolling 7-Day Board)",
-          top5,
-          "Score Formula: Questions + (15/Interview) + Jobs/Target*10 + Streak + Workshop (4/session)"
-        );
-        return loading.edit({ content: null, embeds: [embed] });
+      if (!standings || standings.length === 0) {
+        return loading.edit({
+          content: null,
+          embeds: [Embeds.warning("No Data", "No active student performance records found for this period yet.")]
+        });
       }
 
-      // Default !leaderboard / !weeklyreport
-      const top10 = standings.slice(0, 10);
-      const embed = Embeds.leaderboard(
+      const embeds = Embeds.fullWeeklyLeaderboardEmbeds(
         "Weekly Student Performance Leaderboard",
-        top10,
-        "Includes Job Applications, Streaks, Daily Questions, Interviews, and Workshop Attendance"
+        standings,
+        "Includes Attendance (+1/-1), Job Applications, Streaks (+3/day), Interviews (+5), and Tasks"
       );
 
-      await loading.edit({ content: null, embeds: [embed] });
+      const destChannel = ChannelHelper.findChannel(guild, 'RTBR');
+      const studentRole = guild.roles.cache.find(r => r.name.toLowerCase() === (constants.ROLES.ACTIVE_STUDENT || 'active student').toLowerCase());
+      const mentionTag = studentRole ? `@everyone <@&${studentRole.id}>` : `@everyone`;
+
+      if (destChannel && destChannel.id !== message.channel.id && ChannelHelper.isChannel(message.channel, 'BOT_ADMIN')) {
+        // Send all embeds with @everyone mention to #referral-leaderboard
+        await destChannel.send({
+          content: `${mentionTag} 📢 **WEEKLY COHORT PERFORMANCE & REFERRAL LEADERBOARD IS OUT!** 🏆`,
+          embeds: embeds
+        }).catch(() => {});
+
+        const topStudent = standings[0];
+        const receiptEmbed = Embeds.success(
+          "Weekly Performance Leaderboard Published! 🏆",
+          `✅ Leaderboard calculated across all **${standings.length} active students**.\n\n` +
+          `• 🥇 **Top Rank:** ${topStudent ? `<@${topStudent.discordId}> (**${topStudent.totalPoints} pts**)` : 'N/A'}\n` +
+          `• 👥 **Full Roster Breakdown:** Ranks #1 to #${standings.length} included in identical detail.\n` +
+          `• 📢 **Published to Channel:** <#${destChannel.id}> with \`@everyone\` mention.`
+        );
+        await loading.edit({ content: null, embeds: [receiptEmbed] });
+      } else {
+        await loading.edit({
+          content: `${mentionTag} 📢 **Weekly Student Performance Leaderboard:**`,
+          embeds: embeds
+        });
+      }
     } catch (err) {
       await loading.edit({ content: null, embeds: [Embeds.error("Leaderboard Error", err.message)] });
     }

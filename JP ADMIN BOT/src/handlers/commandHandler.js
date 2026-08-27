@@ -56,13 +56,83 @@ class CommandHandler {
     const command = this.commands.get(commandName);
     if (!command) return;
 
-    // Check Supervisor permissions
-    if (command.supervisorOnly !== false) {
+    // Check Role-Based Permissions
+    const isStaff = cohortManager.isStaff(message.guild.id, message.member);
+
+    if (command.supervisorOnly === true || command.ownerOnly === true) {
       const isSupervisor = cohortManager.isSupervisor(message.guild.id, message.member);
       if (!isSupervisor) {
         return message.reply({
-          embeds: [Embeds.error("Access Denied", "This command is restricted to authorized Mentors & Supervisors.")]
+          embeds: [Embeds.warning(
+            "⚠️ Access Denied",
+            `Hello <@${message.author.id}>, **you are not allowed to use this command.**\n\n` +
+            `This command (\`!${commandName}\`) is strictly restricted to **Supervisors & Administrators** only.\n\n` +
+            `💡 *Students can use commands like \`!leave\`, \`!submit\`, \`!myhealth\`, \`!linksheet\`, \`!leaderboard\`, and \`!help\`.*`
+          )]
         });
+      }
+    } else if (command.mentorOnly === true || command.supervisorOnly !== false) {
+      const isMentor = cohortManager.isMentor(message.guild.id, message.member);
+      if (!isMentor) {
+        return message.reply({
+          embeds: [Embeds.warning(
+            "⚠️ Access Denied",
+            `Hello <@${message.author.id}>, **you are not allowed to use this command.**\n\n` +
+            `This command (\`!${commandName}\`) is strictly restricted to **Mentors & Supervisors** only.\n\n` +
+            `💡 *Students can use commands like \`!leave\`, \`!submit\`, \`!myhealth\`, \`!linksheet\`, \`!leaderboard\`, and \`!help\`.*`
+          )]
+        });
+      }
+    }
+
+    // Check Student Channel Enforcement for Non-Staff Members
+    if (!isStaff) {
+      const ChannelHelper = require('../utils/channelHelper');
+      const STUDENT_CHANNEL_MAPPINGS = {
+        // Health Check & Scorecard
+        'myhealth': { key: 'HEALTH_CHECK', fallbackName: 'dev-health-check', purpose: 'viewing your personal health scorecard' },
+        'myprofile': { key: 'HEALTH_CHECK', fallbackName: 'dev-health-check', purpose: 'viewing your student profile' },
+        'mystatus': { key: 'HEALTH_CHECK', fallbackName: 'dev-health-check', purpose: 'viewing your status' },
+        'healthcheck': { key: 'HEALTH_CHECK', fallbackName: 'dev-health-check', purpose: 'diagnosing your performance' },
+        'me': { key: 'HEALTH_CHECK', fallbackName: 'dev-health-check', purpose: 'checking your health stats' },
+
+        // Job Tracker Sheet Linking
+        'linksheet': { key: 'JOB_TRACKING', fallbackName: 'job-tracker', purpose: 'linking your personal job tracker sheet' },
+        'mysheet': { key: 'JOB_TRACKING', fallbackName: 'job-tracker', purpose: 'inspecting your linked job tracker' },
+        'trackersheet': { key: 'JOB_TRACKING', fallbackName: 'job-tracker', purpose: 'linking your job tracker' },
+        'jobsheet': { key: 'JOB_TRACKING', fallbackName: 'job-tracker', purpose: 'managing your job sheet' },
+        'mytracker': { key: 'JOB_TRACKING', fallbackName: 'job-tracker', purpose: 'managing your application tracker' },
+
+        // Leave Requests
+        'leave': { key: 'LEAVE_REQUEST', fallbackName: 'leave-request', purpose: 'submitting a leave application' },
+        'myleave': { key: 'LEAVE_REQUEST', fallbackName: 'leave-request', purpose: 'checking your leave status' },
+
+        // Job Task Submissions
+        'submit': { key: 'JOB_TASK', fallbackName: 'jobs-task-updates', purpose: 'submitting hiring task assignments' },
+
+        // Performance & Leaderboards
+        'leaderboard': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'viewing cohort performance leaderboards' },
+        'rtbr': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'viewing referral priority rankings' },
+        'weeklyreport': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'viewing the weekly report' },
+        'topstudents': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'viewing top rankings' },
+        'ranks': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'checking cohort rankings' }
+      };
+
+      const mapping = STUDENT_CHANNEL_MAPPINGS[commandName];
+      if (mapping) {
+        const isCorrectChannel = ChannelHelper.isChannel(message.channel, mapping.key);
+        if (!isCorrectChannel) {
+          const targetChannel = ChannelHelper.findChannel(message.guild, mapping.key);
+          const channelMention = targetChannel ? `<#${targetChannel.id}>` : `\`#${mapping.fallbackName}\``;
+
+          return message.reply({
+            embeds: [Embeds.warning(
+              "⚠️ Wrong Channel!",
+              `Hello <@${message.author.id}>, the \`!${commandName}\` command cannot be used here.\n\n` +
+              `👉 **Please use this command in ${channelMention} for ${mapping.purpose}.**`
+            )]
+          });
+        }
       }
     }
 

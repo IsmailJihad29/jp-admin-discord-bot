@@ -38,6 +38,38 @@ class InteractionHandler {
   static async handleButton(interaction, client) {
     const customId = interaction.customId;
 
+    // 0. Student Interactive Health & Scorecard Check Button
+    if (customId === 'btn_my_health_check') {
+      await interaction.deferReply({ ephemeral: true });
+      try {
+        const myHealthCommand = require('../commands/students/myhealth');
+        const embed = await myHealthCommand.buildStudentHealthEmbed(interaction.guild, interaction.member);
+        return interaction.editReply({ embeds: [embed] });
+      } catch (err) {
+        return interaction.editReply({ embeds: [Embeds.error("Health Check Error", err.message)] });
+      }
+    }
+
+    // 0.5 Mentor Template Publisher Buttons
+    if (customId.startsWith('btn_post_tpl_')) {
+      const cohortManager = require('../config/cohortManager');
+      if (!cohortManager.isMentor(interaction.guild.id, interaction.member)) {
+        return interaction.reply({ content: "❌ Only Mentors & Supervisors can broadcast templates.", ephemeral: true });
+      }
+
+      await interaction.deferReply({ ephemeral: true });
+      const filterKey = customId.replace('btn_post_tpl_', '');
+      try {
+        const guidelinesCmd = require('../commands/admin/guidelines');
+        const result = await guidelinesCmd.publishTemplates(interaction.guild, filterKey);
+        return interaction.editReply({
+          content: `✅ Successfully published template(s) to: ${result.publishedChannels.join(', ')}!`
+        });
+      } catch (err) {
+        return interaction.editReply({ content: `❌ Failed to publish template: ${err.message}` });
+      }
+    }
+
     // 1. Open Job Task Submission Modal
     if (customId.startsWith('open_task_modal_')) {
       const parts = customId.split('_');

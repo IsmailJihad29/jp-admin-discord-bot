@@ -25,13 +25,35 @@ module.exports = {
         categories[c.category].push(`\`${c.usage}\` — ${c.description}`);
       });
 
-      const fields = Object.keys(categories).map(cat => ({
-        name: `📁 ${cat.toUpperCase()}`,
-        value: categories[cat].join('\n')
-      }));
+      const fields = [];
+      Object.keys(categories).forEach(cat => {
+        const lines = categories[cat];
+        let currentChunk = '';
+        let partIndex = 1;
+
+        lines.forEach(line => {
+          if ((currentChunk + '\n' + line).length > 950) {
+            fields.push({
+              name: `📁 ${cat.toUpperCase()}${partIndex > 1 ? ` (Part ${partIndex})` : ''}`,
+              value: currentChunk.trim()
+            });
+            currentChunk = line;
+            partIndex++;
+          } else {
+            currentChunk = currentChunk ? `${currentChunk}\n${line}` : line;
+          }
+        });
+
+        if (currentChunk) {
+          fields.push({
+            name: `📁 ${cat.toUpperCase()}${partIndex > 1 ? ` (Part ${partIndex})` : ''}`,
+            value: currentChunk.trim()
+          });
+        }
+      });
 
       const embed = Embeds.info(`JP ADMIN — Complete Command Reference (${catalog.length} Commands)`, "Reference for mentors and supervisors:")
-        .addFields(fields);
+        .addFields(fields.slice(0, 25)); // Discord max 25 fields
 
       return message.reply({ embeds: [embed] });
     }

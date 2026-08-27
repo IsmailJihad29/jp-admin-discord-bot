@@ -17,7 +17,7 @@ module.exports = {
   aliases: ['hire', 'offercracked', 'placed'],
   description: 'Broadcasts a grand Offer Cracked celebration with student journey stats and assigns Hired role',
   usage: '!hired @student <Company Name> [Job Title / Role]',
-  supervisorOnly: true,
+  mentorOnly: true,
 
   async execute(message, args, client) {
     const target = message.mentions.members.first();
