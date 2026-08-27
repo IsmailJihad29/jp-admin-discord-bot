@@ -1,0 +1,386 @@
+/**
+ * JP ADMIN — Automation Scheduler (Asia/Dhaka Timeline)
+ * Streamlined to focus on core requested features:
+ * 1. Daily Attendance Point Scanner (23:00 Sun-Thu) + 3-Day Inactivity Warnings
+ * 2. Daily Job Tracking Audit & Warnings (23:30 Daily)
+ * 3. Job Task Deadline Overdue Monitor (00:05 Daily)
+ * 4. Weekly Performance Leaderboard (18:00 Thursday)
+ * 5. Weekly Inactive Students Report for Mentors (18:30 Thursday)
+ */
+
+const cron = require('node-cron');
+const Logger = require('../utils/logger');
+const cohortManager = require('../config/cohortManager');
+const GasClient = require('./gasClient');
+const ScoringService = require('./scoringService');
+const JobScraperService = require('./jobScraperService');
+const DropoutPredictorService = require('./dropoutPredictorService');
+const ReferralLockoutService = require('./referralLockoutService');
+const Embeds = require('../utils/embedBuilder');
+const constants = require('../config/constants');
+const DateTimeUtil = require('../utils/dateTime');
+
+class Scheduler {
+  constructor() {
+    this.client = null;
+  }
+
+  init(discordClient) {
+    this.client = discordClient;
+    this.scheduleTimeline();
+    Logger.info("Asia/Dhaka Automation Timeline initialized.");
+  }
+
+  getChannel(guild, channelKey) {
+    const ChannelHelper = require('../utils/channelHelper');
+    return ChannelHelper.findChannel(guild, channelKey);
+  }
+
+  scheduleTimeline() {
+    // 1. Morning Attendance Point Scanner from 'Morning Attendance' Google Form Tab - 12:00 PM Sun-Thu
+    cron.schedule('0 12 * * 0-4', () => this.runMorningAttendanceScan(), { timezone: 'Asia/Dhaka' });
+
+    // 2. Daily Attendance Point Scanner from 'Daily Attendance' Google Form Tab - 23:00 Sun-Thu
+    cron.schedule('0 23 * * 0-4', () => this.runDailyAttendanceScan(), { timezone: 'Asia/Dhaka' });
+
+    // 3. Daily Job Tracking Audit (Tiered Scoring & Warning Alerts) - 23:30 Daily
+    cron.schedule('30 23 * * *', () => this.runDailyJobAudit(), { timezone: 'Asia/Dhaka' });
+
+    // 4. Job Task Deadline Overdue Monitor (-2 pts penalty) - 00:05 Daily
+    cron.schedule('5 0 * * *', () => this.runJobTaskDeadlineAudit(), { timezone: 'Asia/Dhaka' });
+
+    // 5. Weekly Performance Leaderboard & Referral Access Sync - 18:00 Thursday
+    cron.schedule('0 18 * * 4', () => this.runWeeklyLeaderboard(), { timezone: 'Asia/Dhaka' });
+
+    // 6. Drop-out Predictor & 1-on-1 Auto-Scheduler - 18:30 Thursday
+    cron.schedule('30 18 * * 4', () => this.runWeeklyRiskAndOneOnOneSchedule(), { timezone: 'Asia/Dhaka' });
+  }
+
+  /**
+   * Morning Attendance Scan from Google Form 'Morning Attendance' tab (Sunday–Thursday at 12:00 PM)
+   * Applies +1 Present, -1 Absent, 0 Leave.
+   */
+  async runMorningAttendanceScan() {
+    Logger.info("[MorningAttendanceScan] Running 12:00 PM morning attendance scan.");
+    const todayStr = DateTimeUtil.getTodayDateStr();
+
+    for (const guild of this.client.guilds.cache.values()) {
+      try {
+        const res = await GasClient.scanMorningAttendance(guild.id, todayStr);
+        if (res && res.status === 'SUCCESS') {
+          const channel = this.getChannel(guild, 'ATTENDANCE') || this.getChannel(guild, 'BOT_ADMIN') || this.getChannel(guild, 'DISCUSSION');
+          if (channel) {
+            const embed = Embeds.success(
+              `🌅 Morning Attendance Synced · ${todayStr}`,
+              `• **Present (+1 pt):** ${res.present}\n` +
+              `• **Absent (-1 pt):** ${res.absent}\n` +
+              `• **Approved Leave (0 pt):** ${res.leave}\n` +
+              `• **Total Active Students:** ${res.totalActive}\n\n` +
+              `✅ *Morning session matrix & points updated in Google Sheets.*`
+            );
+            channel.send({ embeds: [embed] }).catch(() => {});
+          }
+        }
+      } catch (err) {
+        Logger.error(`Morning attendance scan error for guild ${guild.id}:`, err.message);
+      }
+    }
+  }
+
+  async runWeeklyRiskAndOneOnOneSchedule() {
+    Logger.info("[WeeklyRiskAudit] Running Thursday 18:30 Drop-out Predictor & 1-on-1 Auto-Scheduler.");
+    for (const guild of this.client.guilds.cache.values()) {
+      await DropoutPredictorService.runWeeklyRiskAuditAndSchedule(guild);
+      await ReferralLockoutService.enforceCohortAccessLocks(guild);
+    }
+  }
+
+  /**
+   * Daily Attendance Scan from Google Form 'Daily Attendance' tab (Sunday–Thursday at 23:00)
+   * Applies +1 Present, -1 Absent, 0 Leave, and issues warning if a student hits 3 absences in the week.
+   */
+  async runDailyAttendanceScan() {
+    Logger.info("[DailyAttendanceScan] Running 23:00 attendance scan.");
+    const todayStr = DateTimeUtil.getTodayDateStr();
+
+    for (const guild of this.client.guilds.cache.values()) {
+      try {
+        const res = await GasClient.scanDailyAttendance(guild.id, todayStr);
+        if (res && res.status === 'SUCCESS') {
+          const adminCh = this.getChannel(guild, 'BOT_ADMIN') || this.getChannel(guild, 'DISCUSSION');
+          if (adminCh) {
+            const embed = Embeds.success(
+              `Daily Attendance Synced · ${todayStr}`,
+              `• **Present (+1 pt):** ${res.present}\n` +
+              `• **Absent (-1 pt):** ${res.absent}\n` +
+              `• **Approved Leave (0 pt):** ${res.leave}\n` +
+              `• **Total Active Students:** ${res.totalActive}\n\n` +
+              `✅ *Attendance matrix & scores updated in Google Sheets.*`
+            );
+            adminCh.send({ embeds: [embed] }).catch(() => {});
+          }
+
+          // Check if any student reached 3 absences in the current week
+          await this.checkAndWarnInactiveStudents(guild);
+        }
+      } catch (err) {
+        Logger.error(`Attendance scan error for guild ${guild.id}:`, err.message);
+      }
+    }
+  }
+
+  /**
+   * Checks rolling weekly absences and sends a warning to students with 3+ absences
+   */
+  async checkAndWarnInactiveStudents(guild) {
+    try {
+      const attRes = await GasClient.getAttendance(guild.id);
+      const rows = attRes.rows || [];
+      const dates = (attRes.dates || []).slice(-5); // last 5 days (current week)
+
+      const scores = await ScoringService.calculateRTBR(guild.id);
+      const scoreMap = new Map(scores.map(s => [s.discordId, s]));
+
+      const warnChannel = this.getChannel(guild, 'ATTENDANCE') || this.getChannel(guild, 'DISCUSSION');
+
+      for (const student of rows) {
+        if (!student.discordId || student.status !== 'active') continue;
+
+        let weeklyAbsences = 0;
+        dates.forEach(d => {
+          if (student.sessions && student.sessions[d] === 'A') {
+            weeklyAbsences++;
+          }
+        });
+
+        if (weeklyAbsences === 3) { // Warn on the 3rd absence of the week
+          const stats = scoreMap.get(student.discordId) || { totalPoints: 0, details: '' };
+          const embed = Embeds.warning(
+            `⚠️ Inactivity Warning: 3 Absences This Week`,
+            `Hello <@${student.discordId}> (${student.name}), you have been marked **Absent for 3 days** this week.\n\n` +
+            `• **Absences this week:** **3 / 5 days**\n` +
+            `• **Current Total Score:** **${stats.totalPoints} pts**\n` +
+            `• **Recent Activities Breakdown:**\n  ${stats.details || 'No recent activity logged'}\n\n` +
+            `💡 **Action Required:**\n` +
+            `1. Make sure to fill out the **Daily Attendance** form on schedule.\n` +
+            `2. If you are unwell or facing emergencies, submit a leave request using \`!leave\`.\n` +
+            `3. Stay active in your job applications and tasks to avoid dropping behind on the leaderboard!`
+          );
+
+          if (warnChannel) {
+            warnChannel.send({ content: `<@${student.discordId}>`, embeds: [embed] }).catch(() => {});
+          }
+        }
+      }
+    } catch (e) {
+      Logger.error(`Error checking inactive student warnings for guild ${guild.id}:`, e.message);
+    }
+  }
+
+  /**
+   * Weekly Inactive Students Report for Mentors (Every Thursday 18:30)
+   * Lists all students absent >= 3 days this week and tags @Mentor
+   */
+  async runWeeklyInactiveStudentsReport(targetChannel = null) {
+    Logger.info("[WeeklyInactiveReport] Compiling Thursday Inactive Students Report.");
+
+    for (const guild of this.client.guilds.cache.values()) {
+      try {
+        const attRes = await GasClient.getAttendance(guild.id);
+        const rows = attRes.rows || [];
+        const dates = (attRes.dates || []).slice(-5); // last 5 days (Sunday to Thursday)
+
+        const scores = await ScoringService.calculateRTBR(guild.id);
+        const scoreMap = new Map(scores.map(s => [s.discordId, s]));
+
+        const inactiveList = [];
+
+        for (const student of rows) {
+          if (!student.discordId || student.status !== 'active') continue;
+
+          let weeklyAbsences = 0;
+          dates.forEach(d => {
+            if (student.sessions && student.sessions[d] === 'A') {
+              weeklyAbsences++;
+            }
+          });
+
+          if (weeklyAbsences >= 3) {
+            const stats = scoreMap.get(student.discordId) || { totalPoints: 0, details: '' };
+            inactiveList.push({
+              discordId: student.discordId,
+              name: student.name,
+              absences: weeklyAbsences,
+              totalPoints: stats.totalPoints,
+              details: stats.details
+            });
+          }
+        }
+
+        const channel = targetChannel || this.getChannel(guild, 'BOT_ADMIN') || this.getChannel(guild, 'DISCUSSION');
+        if (!channel) continue;
+
+        // Find Mentor role for tagging
+        const mentorRole = guild.roles.cache.find(r => r.name.toLowerCase() === constants.ROLES.MENTOR.toLowerCase() || r.name.toLowerCase() === constants.ROLES.SUPERVISOR.toLowerCase());
+        const tagText = mentorRole ? `<@&${mentorRole.id}>` : `**@Mentors**`;
+
+        if (inactiveList.length === 0) {
+          const embed = Embeds.success(
+            "Weekly Student Activity Report (Thursday Summary)",
+            `🎉 **Awesome work!** All active students maintained good attendance this week. No students had 3 or more absences!`
+          );
+          await channel.send({ content: tagText, embeds: [embed] }).catch(() => {});
+          continue;
+        }
+
+        const listContent = inactiveList.map(s => {
+          return `• <@${s.discordId}> (**${s.name}**)\n  📅 **${s.absences}/5 Days Absent** | ⭐ **${s.totalPoints} pts**\n  ${s.details || 'No recent logs'}`;
+        }).join('\n\n');
+
+        const embed = Embeds.warning(
+          `🚨 Weekly Inactive Students Report (${inactiveList.length} At-Risk)`,
+          `Here is the list of students with **3 or more absences** this week (Sunday to Thursday):\n\n` +
+          `${listContent}\n\n` +
+          `📌 **Mentor Follow-Up:** Please reach out to these students on Discord/WhatsApp to check their situation and help them get back on track.`
+        );
+
+        await channel.send({ content: `${tagText} **Weekly Inactive Students Summary:**`, embeds: [embed] }).catch(() => {});
+      } catch (err) {
+        Logger.error(`Inactive students report error for guild ${guild.id}:`, err.message);
+      }
+    }
+  }
+
+  /**
+   * Daily Job Audit at 23:30 with custom Tiered Scoring rules & Warning mentions
+   */
+  async runDailyJobAudit() {
+    Logger.info("[DailyJobAudit] Running 23:30 job tracking audit.");
+    const todayDate = DateTimeUtil.getTodayDateStr();
+
+    for (const guild of this.client.guilds.cache.values()) {
+      try {
+        const cohort = cohortManager.getCohort(guild.id);
+        const target = cohort?.targets?.applications || constants.SCORING.DEFAULT_JOB_TARGET;
+
+        const rosterRes = await GasClient.getRoster(guild.id);
+        const activeStudents = (rosterRes.students || []).filter(s => s.status === 'active');
+
+        const metTargetList = [];
+        const belowTargetList = [];
+
+        for (const student of activeStudents) {
+          let countToday = 0;
+          let totalRows = 0;
+
+          // Attempt scrape if student's public sheet is linked
+          const sheetRes = await GasClient.request(guild.id, 'getJobSheets', {}).catch(() => ({ sheets: [] }));
+          const studentSheet = (sheetRes.sheets || []).find(s => s.discordId === student.discordId);
+
+          if (studentSheet && studentSheet.sheetUrl) {
+            const scrape = await JobScraperService.scrapeStudentJobSheet(studentSheet.sheetUrl, student.discordId);
+            if (scrape.success) {
+              countToday = scrape.datedTodayCount;
+              totalRows = scrape.totalRows;
+            }
+          }
+
+          const points = ScoringService.calculateDailyJobScore(countToday, target);
+
+          // Record daily metric to Google Sheets
+          await GasClient.recordJobDaily(guild.id, {
+            date: todayDate,
+            email: student.email,
+            count: countToday,
+            name: student.name || student.username,
+            discordId: student.discordId,
+            totalRows: totalRows,
+            newRows: countToday,
+            points: points
+          }).catch(() => {});
+
+          if (countToday >= target) {
+            metTargetList.push({ ...student, count: countToday, points });
+          } else {
+            belowTargetList.push({ ...student, count: countToday, points });
+          }
+        }
+
+        const channel = this.getChannel(guild, 'JOB_TRACKING');
+        if (channel) {
+          const belowMentions = belowTargetList.map(s => `• <@${s.discordId}> (${s.name}): **${s.count}/${target}** apps (\`${s.points >= 0 ? '+' : ''}${s.points} pts\`)`).join('\n');
+          const metMentions = metTargetList.slice(0, 10).map(s => `• <@${s.discordId}> (${s.name}): **${s.count}/${target}** apps (\`+${s.points} pts\`)`).join('\n');
+
+          const embed = Embeds.info(
+            `Daily Job Application Audit (11:30 PM) · ${todayDate}`,
+            `**Target for Today:** **${target} Applications**\n\n` +
+            `**🎯 Met / Exceeded Target (${metTargetList.length} students):**\n${metMentions || 'None yet'}\n\n` +
+            `**⚠️ Below Target (${belowTargetList.length} students):**\n${belowMentions || '✅ Everyone met their target today!'}\n\n` +
+            `*Tiered points calculated and synced to Google Sheets database.*`
+          );
+
+          await channel.send({ embeds: [embed] }).catch(() => {});
+        }
+      } catch (err) {
+        Logger.error(`Job audit error for guild ${guild.id}:`, err.message);
+      }
+    }
+  }
+
+  /**
+   * Daily Job Task Deadline Overdue Monitor (00:05 AM)
+   * Applies -2 points penalty if deadline expired without submission
+   */
+  async runJobTaskDeadlineAudit() {
+    Logger.info("[TaskDeadlineAudit] Running 00:05 overdue task audit.");
+    for (const guild of this.client.guilds.cache.values()) {
+      try {
+        const res = await GasClient.auditOverdueTasks(guild.id);
+        if (res && res.overdueCount > 0) {
+          const taskCh = this.getChannel(guild, 'JOB_TASK');
+          if (taskCh) {
+            const list = res.overdue.map(o => `• <@${o.discordId}> (${o.studentName}): \`${o.taskId}\` — Deadline was \`${o.deadline}\` (**-2 Pts Penalty**)`).join('\n');
+            const embed = Embeds.error(
+              `Overdue Job Tasks Alert (${res.overdueCount} Penalized)`,
+              `The following job task deadlines have expired without a submission request:\n\n${list}\n\n*Make sure to submit tasks on time with \`!submit\`.*`
+            );
+            await taskCh.send({ embeds: [embed] }).catch(() => {});
+          }
+        }
+      } catch (err) {
+        Logger.error(`Task deadline audit error for guild ${guild.id}:`, err.message);
+      }
+    }
+  }
+
+  /**
+   * Weekly Performance Leaderboard (Thursday 6 PM)
+   */
+  async runWeeklyLeaderboard() {
+    for (const guild of this.client.guilds.cache.values()) {
+      const channel = this.getChannel(guild, 'RTBR') || this.getChannel(guild, 'DISCUSSION');
+      if (!channel) continue;
+
+      try {
+        const rtbr = await ScoringService.calculateRTBR(guild.id);
+        const top10 = rtbr.slice(0, 10);
+
+        const list = top10.map((s, idx) => {
+          const medal = idx === 0 ? '🥇' : (idx === 1 ? '🥈' : (idx === 2 ? '🥉' : `**#${idx + 1}**`));
+          return `${medal} <@${s.discordId}> (${s.name}) — **${s.totalPoints} pts**\n   ${s.details}`;
+        }).join('\n\n');
+
+        const embed = Embeds.success(
+          "🏆 Weekly Performance Leaderboard (Thursday 6 PM)",
+          `Here are the top active students across attendance, job applications, streaks, interviews, and tasks:\n\n${list}\n\n*Keep up the momentum!*`
+        );
+
+        channel.send({ embeds: [embed] }).catch(() => {});
+      } catch (err) {
+        Logger.error("Failed weekly leaderboard:", err.message);
+      }
+    }
+  }
+}
+
+module.exports = new Scheduler();
