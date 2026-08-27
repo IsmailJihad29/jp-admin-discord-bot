@@ -211,20 +211,80 @@ class InteractionHandler {
     // 3. Leave Approval / Rejection buttons
     if (customId.startsWith('leave_approve_') || customId.startsWith('leave_reject_')) {
       const isApprove = customId.startsWith('leave_approve_');
-      const reqId = customId.replace(isApprove ? 'leave_approve_' : 'leave_reject_', '');
+      const rawData = customId.replace(isApprove ? 'leave_approve_' : 'leave_reject_', '');
+      const parts = rawData.split('_');
+      const reqId = parts[0];
+      const studentId = parts[1];
+      const startDate = parts[2];
+      const endDate = parts[3];
+
+      const cohortManager = require('../config/cohortManager');
+      if (!cohortManager.isMentor(interaction.guild.id, interaction.member)) {
+        return interaction.reply({ content: "❌ Access denied: Only Mentors & Supervisors can review leave requests.", ephemeral: true });
+      }
 
       await interaction.deferUpdate();
       const status = isApprove ? 'APPROVED' : 'REJECTED';
       const result = await GasClient.updateLeave(interaction.guild.id, reqId, status, `Decided by ${interaction.user.tag}`);
 
       if (result && result.status === 'SUCCESS') {
-        const embed = Embeds.success(
-          `Leave Request ${status}`,
-          `Request **${reqId}** has been marked as **${status}** by <@${interaction.user.id}>.\n*Excused dates will count as 0 pts in Attendance.*`
-        );
+        const embed = isApprove
+          ? Embeds.success(
+              `Leave Request Approved ✅`,
+              `• **Request ID:** \`${reqId}\`\n` +
+              `• **Student:** ${studentId ? `<@${studentId}>` : 'Student'}\n` +
+              `• **Approved By:** <@${interaction.user.id}>\n` +
+              `• **Status:** 🟢 **APPROVED**\n\n` +
+              `*Excused working dates will count as 'L' (0 pts) in Attendance and will not trigger absence penalties.*`
+            )
+          : Embeds.warning(
+              `Leave Request Rejected ❌`,
+              `• **Request ID:** \`${reqId}\`\n` +
+              `• **Student:** ${studentId ? `<@${studentId}>` : 'Student'}\n` +
+              `• **Reviewed By:** <@${interaction.user.id}>\n` +
+              `• **Status:** 🔴 **REJECTED**`
+            );
+
         await interaction.message.edit({ embeds: [embed], components: [] });
+
+        // NOTIFY THE STUDENT
+        if (studentId) {
+          const studentNotifyEmbed = isApprove
+            ? Embeds.success(
+                "Leave Request Approved! 🎉",
+                `Hello <@${studentId}>, your leave request (**${reqId}**) has been **APPROVED** by <@${interaction.user.id}>!\n\n` +
+                (startDate && endDate ? `• 📅 **Approved Dates:** \`${startDate}\` to \`${endDate}\`\n` : '') +
+                `• ⭐ **Attendance Impact:** Marked as Excused Leave (\`L\`) with 0 absence penalty.\n\n` +
+                `*Take care and get back to your journey refreshed!*`
+              )
+            : Embeds.warning(
+                "Leave Request Update ⚠️",
+                `Hello <@${studentId}>, your leave request (**${reqId}**) was **REJECTED** by <@${interaction.user.id}>.\n\n` +
+                `*Please reach out to your mentor if you have any questions.*`
+              );
+
+          // 1. Try sending DM
+          let dmSuccess = false;
+          try {
+            const studentUser = await client.users.fetch(studentId).catch(() => null);
+            if (studentUser) {
+              await studentUser.send({ embeds: [studentNotifyEmbed] });
+              dmSuccess = true;
+            }
+          } catch (dmErr) {
+            Logger.debug(`Could not DM student ${studentId}:`, dmErr.message);
+          }
+
+          // 2. Fallback to leave request channel if DM not possible
+          if (!dmSuccess) {
+            const leaveChannel = ChannelHelper.findChannel(interaction.guild, 'LEAVE_REQUEST');
+            if (leaveChannel) {
+              await leaveChannel.send({ content: `<@${studentId}>`, embeds: [studentNotifyEmbed] }).catch(() => {});
+            }
+          }
+        }
       } else {
-        await interaction.followUp({ content: `Failed to update leave request ${reqId}.`, ephemeral: true });
+        await interaction.followUp({ content: `Failed to update leave request ${reqId}: ${result?.error || 'Unknown error'}`, ephemeral: true });
       }
       return;
     }
@@ -315,9 +375,41 @@ class InteractionHandler {
         reason: reason
       });
 
-      await interaction.editReply({
-        embeds: [Embeds.success("Leave Request Submitted", `Your leave request (**${result.requestId}**) for **${startDate} to ${endDate}** has been sent to supervisors for review.`)]
-      });
+      const studentEmbed = Embeds.info(
+        "Leave Request Under Review ⏳",
+        `Hello <@${interaction.user.id}>, **your leave request is under review.**\n\n` +
+        `• 🆔 **Request ID:** \`${result.requestId}\`\n` +
+        `• 📅 **Requested Dates:** \`${startDate}\` to \`${endDate}\`\n` +
+        `• 📝 **Reason:** ${reason}\n\n` +
+        `🔔 **You will be notified when your leave is approved by mentors.**`
+      );
+
+      await interaction.editReply({ embeds: [studentEmbed] });
+
+      // Forward to mentor channel with interactive review buttons
+      const mentorChannel = ChannelHelper.findChannel(interaction.guild, 'BOT_ADMIN') || ChannelHelper.findChannel(interaction.guild, 'LEAVE_REQUEST');
+      if (mentorChannel) {
+        const mentorEmbed = Embeds.warning(
+          `📋 New Leave Request for Review (${result.requestId})`,
+          `• **Student:** <@${interaction.user.id}> (${interaction.user.displayName || interaction.user.username})\n` +
+          `• **Dates:** \`${startDate}\` to \`${endDate}\`\n` +
+          `• **Reason:** ${reason}\n\n` +
+          `*Review and click below to decide:*`
+        );
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`leave_approve_${result.requestId}_${interaction.user.id}_${startDate}_${endDate}`)
+            .setLabel('✅ Approve Leave')
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId(`leave_reject_${result.requestId}_${interaction.user.id}_${startDate}_${endDate}`)
+            .setLabel('❌ Reject Leave')
+            .setStyle(ButtonStyle.Danger)
+        );
+
+        await mentorChannel.send({ embeds: [mentorEmbed], components: [row] }).catch(() => {});
+      }
       return;
     }
   }
