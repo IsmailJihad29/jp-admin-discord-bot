@@ -76,6 +76,50 @@ class Embeds {
       .setDescription(desc)
       .setFooter({ text: footerNote || `JP ADMIN ${constants.BOT_VERSION} · Weekly Leaderboard` });
   }
+
+  static attendanceReport(title, dateStr, res) {
+    const records = res.records || [];
+    const present = records.filter(r => r.status === 'P');
+    const absent = records.filter(r => r.status === 'A');
+    const leave = records.filter(r => r.status === 'L');
+
+    let desc = `📊 **Summary Statistics:**\n` +
+      `• **Present (+1 pt):** ${res.present !== undefined ? res.present : present.length}\n` +
+      `• **Absent (-1 pt):** ${res.absent !== undefined ? res.absent : absent.length}\n` +
+      `• **Approved Leave (0 pt):** ${res.leave !== undefined ? res.leave : leave.length}\n` +
+      `• **Total Active Students:** ${res.totalActive || records.length}\n\n` +
+      `──────────────────────────────\n` +
+      `📋 **Student Attendance & Point Breakdown:**\n\n`;
+
+    if (present.length > 0) {
+      desc += `**✅ Attended (+1 pt) [${present.length}]:**\n` +
+        present.map(r => `• ${r.discordId ? `<@${r.discordId}>` : `**${r.name}**`} — \`+1 pt\``).join('\n') + '\n\n';
+    }
+
+    if (absent.length > 0) {
+      desc += `**❌ Absent (-1 pt) [${absent.length}]:**\n` +
+        absent.map(r => `• ${r.discordId ? `<@${r.discordId}>` : `**${r.name}**`} — \`-1 pt\``).join('\n') + '\n\n';
+    }
+
+    if (leave.length > 0) {
+      desc += `**🌴 Approved Leave (0 pt) [${leave.length}]:**\n` +
+        leave.map(r => `• ${r.discordId ? `<@${r.discordId}>` : `**${r.name}**`} — \`0 pt\``).join('\n') + '\n\n';
+    }
+
+    if (records.length === 0) {
+      desc += `*No student records found.*`;
+    }
+
+    if (desc.length > 4000) {
+      desc = desc.substring(0, 3950) + "\n\n*...and more students*";
+    }
+
+    return new EmbedBuilder()
+      .setColor(0x10B981) // Emerald Green
+      .setTitle(`🌅 ${title} · ${dateStr}`)
+      .setDescription(desc)
+      .setFooter({ text: `JP ADMIN ${constants.BOT_VERSION} · ${DateTimeUtil.getFullTimestamp()}` });
+  }
 }
 
 module.exports = Embeds;

@@ -70,14 +70,7 @@ class Scheduler {
         if (res && res.status === 'SUCCESS') {
           const channel = this.getChannel(guild, 'ATTENDANCE') || this.getChannel(guild, 'BOT_ADMIN') || this.getChannel(guild, 'DISCUSSION');
           if (channel) {
-            const embed = Embeds.success(
-              `🌅 Morning Attendance Synced · ${todayStr}`,
-              `• **Present (+1 pt):** ${res.present}\n` +
-              `• **Absent (-1 pt):** ${res.absent}\n` +
-              `• **Approved Leave (0 pt):** ${res.leave}\n` +
-              `• **Total Active Students:** ${res.totalActive}\n\n` +
-              `✅ *Morning session matrix & points updated in Google Sheets.*`
-            );
+            const embed = Embeds.attendanceReport("Morning Attendance Synced", todayStr, res);
             channel.send({ embeds: [embed] }).catch(() => {});
           }
         }
@@ -107,17 +100,10 @@ class Scheduler {
       try {
         const res = await GasClient.scanDailyAttendance(guild.id, todayStr);
         if (res && res.status === 'SUCCESS') {
-          const adminCh = this.getChannel(guild, 'BOT_ADMIN') || this.getChannel(guild, 'DISCUSSION');
-          if (adminCh) {
-            const embed = Embeds.success(
-              `Daily Attendance Synced · ${todayStr}`,
-              `• **Present (+1 pt):** ${res.present}\n` +
-              `• **Absent (-1 pt):** ${res.absent}\n` +
-              `• **Approved Leave (0 pt):** ${res.leave}\n` +
-              `• **Total Active Students:** ${res.totalActive}\n\n` +
-              `✅ *Attendance matrix & scores updated in Google Sheets.*`
-            );
-            adminCh.send({ embeds: [embed] }).catch(() => {});
+          const channel = this.getChannel(guild, 'ATTENDANCE') || this.getChannel(guild, 'BOT_ADMIN') || this.getChannel(guild, 'DISCUSSION');
+          if (channel) {
+            const embed = Embeds.attendanceReport("Daily Attendance Synced", todayStr, res);
+            channel.send({ embeds: [embed] }).catch(() => {});
           }
 
           // Check if any student reached 3 absences in the current week

@@ -29,15 +29,7 @@ module.exports = {
         });
       }
 
-      const embed = Embeds.success(
-        `🌅 Morning Attendance Synced · ${targetDate}`,
-        `• **Present (+1 pt):** ${res.present}\n` +
-        `• **Absent (-1 pt):** ${res.absent}\n` +
-        `• **Approved Leave (0 pt):** ${res.leave}\n` +
-        `• **Total Active Students:** ${res.totalActive}\n\n` +
-        `✅ *Morning session matrix and scores updated in Google Sheets database.*`
-      );
-
+      const embed = Embeds.attendanceReport("Morning Attendance Synced", targetDate, res);
       await loading.edit({ content: null, embeds: [embed] });
     } catch (err) {
       await loading.edit({ content: null, embeds: [Embeds.error("Scan Error", err.message)] });

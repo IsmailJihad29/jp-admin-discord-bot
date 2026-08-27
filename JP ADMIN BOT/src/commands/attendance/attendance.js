@@ -49,14 +49,7 @@ module.exports = {
       try {
         const res = await GasClient.scanDailyAttendance(guildId, targetDate);
         if (res && res.status === 'SUCCESS') {
-          const embed = Embeds.success(
-            `Daily Attendance Scanned · ${targetDate}`,
-            `• **Present (+1 pt):** ${res.present}\n` +
-            `• **Absent (-1 pt):** ${res.absent}\n` +
-            `• **Approved Leave (0 pt):** ${res.leave}\n` +
-            `• **Total Active Students:** ${res.totalActive}\n\n` +
-            `✅ *Attendance matrix & scores updated in Google Sheets database.*`
-          );
+          const embed = Embeds.attendanceReport("Daily Attendance Scanned", targetDate, res);
           return loading.edit({ content: null, embeds: [embed] });
         } else {
           return loading.edit({ content: null, embeds: [Embeds.error("Scan Failed", res.error || "Failed to scan attendance tab.")] });
