@@ -213,6 +213,53 @@ class CohortManager {
     return this.getCohortScoring(guildId);
   }
 
+  queueCustomAttendance(guildId, item) {
+    const cohort = this.getCohort(guildId);
+    if (!cohort.queuedAttendance) cohort.queuedAttendance = [];
+
+    const queueId = `ATT-${Date.now().toString(36).toUpperCase()}`;
+    const entry = {
+      id: queueId,
+      tabName: item.tabName,
+      date: item.date,
+      sessionLabel: item.sessionLabel || item.tabName,
+      requestedBy: item.requestedBy || "Admin",
+      scheduledTime: item.scheduledTime || "23:30",
+      createdAt: new Date().toISOString()
+    };
+    cohort.queuedAttendance.push(entry);
+    this.saveToDisk();
+    return entry;
+  }
+
+  getQueuedCustomAttendances(guildId, dateStr = null) {
+    const cohort = this.getCohort(guildId);
+    const list = cohort.queuedAttendance || [];
+    if (!dateStr) return list;
+    return list.filter(item => item.date === dateStr);
+  }
+
+  removeQueuedCustomAttendance(guildId, queueIdOrTabName) {
+    const cohort = this.getCohort(guildId);
+    if (!cohort.queuedAttendance) return false;
+    const initialLen = cohort.queuedAttendance.length;
+    cohort.queuedAttendance = cohort.queuedAttendance.filter(item => 
+      item.id.toLowerCase() !== queueIdOrTabName.toLowerCase() &&
+      item.tabName.toLowerCase() !== queueIdOrTabName.toLowerCase()
+    );
+    this.saveToDisk();
+    return cohort.queuedAttendance.length < initialLen;
+  }
+
+  clearCompletedCustomAttendances(guildId, completedIds = []) {
+    const cohort = this.getCohort(guildId);
+    if (!cohort.queuedAttendance) return;
+    if (completedIds.length > 0) {
+      cohort.queuedAttendance = cohort.queuedAttendance.filter(item => !completedIds.includes(item.id));
+    }
+    this.saveToDisk();
+  }
+
   getAllCohorts() {
     return Array.from(this.cohorts.values());
   }

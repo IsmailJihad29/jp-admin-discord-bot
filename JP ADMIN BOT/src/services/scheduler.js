@@ -46,13 +46,16 @@ class Scheduler {
     // 3. Daily Job Tracking Audit (Tiered Scoring & Warning Alerts) - 23:30 Daily
     cron.schedule('30 23 * * *', () => this.runDailyJobAudit(), { timezone: 'Asia/Dhaka' });
 
-    // 4. Job Task Deadline Overdue Monitor (-2 pts penalty) - 00:05 Daily
+    // 4. Queued Custom Attendance Scanner - 23:30 Daily
+    cron.schedule('30 23 * * *', () => this.runQueuedCustomAttendanceScans(), { timezone: 'Asia/Dhaka' });
+
+    // 5. Job Task Deadline Overdue Monitor (-2 pts penalty) - 00:05 Daily
     cron.schedule('5 0 * * *', () => this.runJobTaskDeadlineAudit(), { timezone: 'Asia/Dhaka' });
 
-    // 5. Weekly Performance Leaderboard & Referral Access Sync - 18:00 Thursday
+    // 6. Weekly Performance Leaderboard & Referral Access Sync - 18:00 Thursday
     cron.schedule('0 18 * * 4', () => this.runWeeklyLeaderboard(), { timezone: 'Asia/Dhaka' });
 
-    // 6. Drop-out Predictor & 1-on-1 Auto-Scheduler - 18:30 Thursday
+    // 7. Drop-out Predictor & 1-on-1 Auto-Scheduler - 18:30 Thursday
     cron.schedule('30 18 * * 4', () => this.runWeeklyRiskAndOneOnOneSchedule(), { timezone: 'Asia/Dhaka' });
   }
 
@@ -387,6 +390,83 @@ class Scheduler {
         }).catch(() => {});
       } catch (err) {
         Logger.error("Failed weekly leaderboard:", err.message);
+      }
+    }
+  }
+
+  /**
+   * Scans and publishes all queued custom attendance tasks for today (Every night at 23:30)
+   */
+  async runQueuedCustomAttendanceScans() {
+    Logger.info("[CustomAttendanceQueue] Checking queued custom attendance scans for 23:30.");
+    const todayStr = DateTimeUtil.getTodayDateStr();
+
+    for (const guild of this.client.guilds.cache.values()) {
+      try {
+        const queue = cohortManager.getQueuedCustomAttendances(guild.id, todayStr);
+        if (!queue || queue.length === 0) continue;
+
+        Logger.info(`[CustomAttendanceQueue] Found ${queue.length} queued scan(s) for guild: ${guild.name} (${guild.id})`);
+        const completedIds = [];
+
+        for (const item of queue) {
+          try {
+            Logger.info(`[CustomAttendanceQueue] Scanning custom tab '${item.tabName}' for date '${item.date}'...`);
+            const res = await GasClient.scanCustomAttendance(guild.id, item.tabName, item.date, item.sessionLabel);
+
+            const destChannel = this.getChannel(guild, 'ATTENDANCE') || this.getChannel(guild, 'DISCUSSION');
+            const adminChannel = this.getChannel(guild, 'BOT_ADMIN');
+
+            if (res && res.status === 'SUCCESS') {
+              const reportEmbed = Embeds.attendanceReport(
+                `Custom Attendance Synced (${item.sessionLabel || item.tabName})`,
+                item.date,
+                res
+              );
+
+              if (destChannel) {
+                await destChannel.send({
+                  content: `📢 **Scheduled Custom Attendance Report (${item.sessionLabel || item.tabName})**`,
+                  embeds: [reportEmbed]
+                }).catch(() => {});
+              }
+
+              if (adminChannel) {
+                const receiptEmbed = Embeds.success(
+                  "Scheduled Custom Attendance Published! 📑",
+                  `✅ Automatically scanned queued tab **${res.formTabScanned || item.tabName}** for \`${item.date}\`.\n\n` +
+                  `• **Session Label:** \`${res.colHeader || item.sessionLabel || item.tabName}\`\n` +
+                  `• **Present (+1 pt):** **${res.present}**\n` +
+                  `• **Absent (-1 pt):** **${res.absent}**\n` +
+                  `• **Approved Leave (0 pt):** **${res.leave}**\n` +
+                  `• **Total Active Students:** **${res.totalActive}**\n\n` +
+                  `📢 *Report successfully published to ${destChannel ? `<#${destChannel.id}>` : 'attendance channel'}*`
+                );
+                await adminChannel.send({ embeds: [receiptEmbed] }).catch(() => {});
+              }
+
+              completedIds.push(item.id);
+            } else {
+              Logger.error(`[CustomAttendanceQueue] Failed to scan tab '${item.tabName}':`, res?.error);
+              if (adminChannel) {
+                const errEmbed = Embeds.error(
+                  "Scheduled Custom Attendance Scan Failed ⚠️",
+                  `Could not scan queued custom tab **${item.tabName}** for \`${item.date}\`:\n\`${res?.error || 'Unknown error'}\`\n\n` +
+                  `*Please verify that the tab name exists in your Google Sheet.*`
+                );
+                await adminChannel.send({ embeds: [errEmbed] }).catch(() => {});
+              }
+            }
+          } catch (itemErr) {
+            Logger.error(`[CustomAttendanceQueue] Error processing queued tab '${item.tabName}':`, itemErr.message);
+          }
+        }
+
+        if (completedIds.length > 0) {
+          cohortManager.clearCompletedCustomAttendances(guild.id, completedIds);
+        }
+      } catch (err) {
+        Logger.error(`Queued custom attendance error for guild ${guild.id}:`, err.message);
       }
     }
   }
