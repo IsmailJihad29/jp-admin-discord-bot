@@ -18,7 +18,7 @@ var CONFIG = {
  * -------------------------------------------------------------------------
  */
 var SCHEMA_DEFS = {
-  "All Data": ["Full Name", "Email", "Phone", "Discord Username", "Region", "Subregion", "Notes"],
+  "All Data": ["Name", "Your Course Email Address", "Mobile Number", "Discord Username", "Region", "Subregion", "Notes"],
   "Bot_Map": ["Email", "Name", "Discord Username", "Discord ID", "Status", "Region", "Subregion", "Phone", "Match Source", "Review Note"],
   "Attendance": ["Name", "Email", "Phone", "Discord ID", "Status", "Remarks"],
   "Daily Attendance": ["Timestamp", "Email Address", "Full Name", "Discord ID", "Attendance Status"],
@@ -297,6 +297,48 @@ function getRosterData(ss) {
         username: row[2] ? String(row[2]).trim() : "",
         discordId: row[3] ? String(row[3]).trim() : "",
         status: row[4] ? String(row[4]).trim().toLowerCase() : "active",
+/**
+ * Helper to dynamically find column index by fuzzy matching header names
+ */
+function findHeaderColumnIndex(headers, possibleNames) {
+  for (var i = 0; i < headers.length; i++) {
+    var h = String(headers[i] || "").toLowerCase().replace(/[^a-z0-9]/g, '');
+    for (var j = 0; j < possibleNames.length; j++) {
+      var target = possibleNames[j].toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (h === target || h.indexOf(target) !== -1) {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+/**
+ * -------------------------------------------------------------------------
+ * 4. Roster Management (Always Sync from 'All Data' to 'Bot_Map')
+ * -------------------------------------------------------------------------
+ */
+function getRosterData(ss) {
+  var sheet = ss.getSheetByName("Bot_Map");
+  var allDataSheet = ss.getSheetByName("All Data");
+
+  if (!sheet) {
+    setupAllRequiredSheets(ss);
+    sheet = ss.getSheetByName("Bot_Map");
+  }
+
+  var values = sheet ? sheet.getDataRange().getValues() : [];
+  var students = [];
+
+  if (values && values.length > 1) {
+    for (var i = 1; i < values.length; i++) {
+      var row = values[i];
+      var student = {
+        email: row[0] ? String(row[0]).trim() : "",
+        name: row[1] ? String(row[1]).trim() : "",
+        username: row[2] ? String(row[2]).trim() : "",
+        discordId: row[3] ? String(row[3]).trim() : "",
+        status: row[4] ? String(row[4]).trim().toLowerCase() : "active",
         region: row[5] ? String(row[5]).trim() : "",
         subregion: row[6] ? String(row[6]).trim() : "",
         phone: row[7] ? String(row[7]).trim() : "",
@@ -310,17 +352,31 @@ function getRosterData(ss) {
     }
   }
 
-  // Fallback: If Bot_Map is empty, load directly from 'All Data' master tab
+  // Fallback: If Bot_Map is empty, load directly from 'All Data' master tab using dynamic headers
   if (students.length === 0 && allDataSheet && allDataSheet.getLastRow() > 1) {
     var allDataRows = allDataSheet.getDataRange().getValues();
+    var headers = allDataRows[0];
+
+    var nameCol = findHeaderColumnIndex(headers, ["Name", "Full Name", "Student Name"]);
+    var emailCol = findHeaderColumnIndex(headers, ["Your Course Email Address", "Course Email Address", "Course Email", "Email Address", "Email"]);
+    var phoneCol = findHeaderColumnIndex(headers, ["Mobile Number", "Mobile", "Phone Number", "Phone", "WhatsApp Number"]);
+    var discordCol = findHeaderColumnIndex(headers, ["Discord Username", "Discord Handle", "Discord User", "Discord Tag", "Discord"]);
+    var regionCol = findHeaderColumnIndex(headers, ["Region", "Location"]);
+    var subregionCol = findHeaderColumnIndex(headers, ["Subregion", "Area"]);
+
+    if (nameCol === -1) nameCol = 0;
+    if (emailCol === -1) emailCol = 1;
+    if (phoneCol === -1) phoneCol = 2;
+    if (discordCol === -1) discordCol = 3;
+
     for (var k = 1; k < allDataRows.length; k++) {
       var aRow = allDataRows[k];
-      var aName = String(aRow[0] || "").trim();
-      var aEmail = String(aRow[1] || "").trim();
-      var aPhone = String(aRow[2] || "").trim();
-      var aUsername = String(aRow[3] || "").trim();
-      var aRegion = String(aRow[4] || "").trim();
-      var aSubregion = String(aRow[5] || "").trim();
+      var aName = String(nameCol >= 0 ? aRow[nameCol] : "").trim();
+      var aEmail = String(emailCol >= 0 ? aRow[emailCol] : "").trim();
+      var aPhone = String(phoneCol >= 0 ? aRow[phoneCol] : "").trim();
+      var aUsername = String(discordCol >= 0 ? aRow[discordCol] : "").trim();
+      var aRegion = String(regionCol >= 0 ? aRow[regionCol] : "").trim();
+      var aSubregion = String(subregionCol >= 0 ? aRow[subregionCol] : "").trim();
 
       if (aName || aEmail || aUsername) {
         students.push({
@@ -351,18 +407,34 @@ function syncRosterData(ss, discordMembers) {
   botMapSheet = ss.getSheetByName("Bot_Map");
   allDataSheet = ss.getSheetByName("All Data");
 
-  // 1. Read master student records from 'All Data' tab
+  // 1. Read master student records from 'All Data' tab with dynamic column mapping
   var allDataStudents = [];
   if (allDataSheet && allDataSheet.getLastRow() > 1) {
     var allDataRows = allDataSheet.getDataRange().getValues();
+    var headers = allDataRows[0];
+
+    // Detect column indexes for: Name, Your Course Email Address, Mobile Number, Discord Username
+    var nameCol = findHeaderColumnIndex(headers, ["Name", "Full Name", "Student Name"]);
+    var emailCol = findHeaderColumnIndex(headers, ["Your Course Email Address", "Course Email Address", "Course Email", "Email Address", "Email"]);
+    var phoneCol = findHeaderColumnIndex(headers, ["Mobile Number", "Mobile", "Phone Number", "Phone", "WhatsApp Number"]);
+    var discordCol = findHeaderColumnIndex(headers, ["Discord Username", "Discord Handle", "Discord User", "Discord Tag", "Discord"]);
+    var regionCol = findHeaderColumnIndex(headers, ["Region", "Location"]);
+    var subregionCol = findHeaderColumnIndex(headers, ["Subregion", "Area"]);
+
+    if (nameCol === -1) nameCol = 0;
+    if (emailCol === -1) emailCol = 1;
+    if (phoneCol === -1) phoneCol = 2;
+    if (discordCol === -1) discordCol = 3;
+
     for (var i = 1; i < allDataRows.length; i++) {
       var row = allDataRows[i];
-      var name = String(row[0] || "").trim();
-      var email = String(row[1] || "").trim();
-      var phone = String(row[2] || "").trim();
-      var uName = String(row[3] || "").trim().toLowerCase().replace(/^@/, '');
-      var region = String(row[4] || "").trim();
-      var subregion = String(row[5] || "").trim();
+      var name = String(nameCol >= 0 ? row[nameCol] : "").trim();
+      var email = String(emailCol >= 0 ? row[emailCol] : "").trim();
+      var phone = String(phoneCol >= 0 ? row[phoneCol] : "").trim();
+      var rawUsername = String(discordCol >= 0 ? row[discordCol] : "").trim();
+      var uName = rawUsername.toLowerCase().replace(/^@/, '').split('#')[0].trim();
+      var region = String(regionCol >= 0 ? row[regionCol] : "").trim();
+      var subregion = String(subregionCol >= 0 ? row[subregionCol] : "").trim();
 
       if (name || email || uName) {
         allDataStudents.push({
@@ -370,7 +442,7 @@ function syncRosterData(ss, discordMembers) {
           email: email,
           phone: phone,
           username: uName,
-          rawUsername: String(row[3] || "").trim(),
+          rawUsername: rawUsername,
           region: region,
           subregion: subregion
         });
@@ -387,7 +459,7 @@ function syncRosterData(ss, discordMembers) {
     discordMembers.forEach(function(m) {
       var dId = String(m.discordId || m.id || "").trim();
       var rawUsername = String(m.username || "").trim();
-      var cleanUsername = rawUsername.toLowerCase().replace(/^@/, '');
+      var cleanUsername = rawUsername.toLowerCase().replace(/^@/, '').split('#')[0].trim();
       var displayName = String(m.displayName || m.name || "").trim().toLowerCase();
 
       var mObj = {
@@ -413,7 +485,7 @@ function syncRosterData(ss, discordMembers) {
 
   for (var j = 1; j < botMapValues.length; j++) {
     var bEmail = String(botMapValues[j][0] || "").trim().toLowerCase();
-    var bUser = String(botMapValues[j][2] || "").trim().toLowerCase().replace(/^@/, '');
+    var bUser = String(botMapValues[j][2] || "").trim().toLowerCase().replace(/^@/, '').split('#')[0].trim();
     var bId = String(botMapValues[j][3] || "").trim();
 
     if (bId) existingMapById[bId] = j;
@@ -432,7 +504,7 @@ function syncRosterData(ss, discordMembers) {
     var cleanEmail = student.email.toLowerCase();
     var cleanName = student.name.toLowerCase();
 
-    // Match with Discord member
+    // Match with Discord member by username or display name
     var dMember = memberByUsername[cleanUName] || memberByName[cleanName] || null;
     var dId = dMember ? dMember.discordId : "";
     var currentUsername = dMember ? dMember.username : student.rawUsername;
@@ -482,7 +554,7 @@ function syncRosterData(ss, discordMembers) {
     discordMembers.forEach(function(m) {
       var dId = String(m.discordId || m.id || "").trim();
       var rawUsername = String(m.username || "").trim();
-      var cleanUsername = rawUsername.toLowerCase().replace(/^@/, '');
+      var cleanUsername = rawUsername.toLowerCase().replace(/^@/, '').split('#')[0].trim();
       var displayName = String(m.displayName || m.name || "").trim();
 
       if (!dId) return;
