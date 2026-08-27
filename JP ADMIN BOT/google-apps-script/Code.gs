@@ -272,32 +272,6 @@ function runDoctorCheck(ss) {
 }
 
 /**
- * -------------------------------------------------------------------------
- * 4. Roster Management (Always Sync from 'All Data' to 'Bot_Map')
- * -------------------------------------------------------------------------
- */
-function getRosterData(ss) {
-  var sheet = ss.getSheetByName("Bot_Map");
-  var allDataSheet = ss.getSheetByName("All Data");
-
-  if (!sheet) {
-    setupAllRequiredSheets(ss);
-    sheet = ss.getSheetByName("Bot_Map");
-  }
-
-  var values = sheet ? sheet.getDataRange().getValues() : [];
-  var students = [];
-
-  if (values && values.length > 1) {
-    for (var i = 1; i < values.length; i++) {
-      var row = values[i];
-      var student = {
-        email: row[0] ? String(row[0]).trim() : "",
-        name: row[1] ? String(row[1]).trim() : "",
-        username: row[2] ? String(row[2]).trim() : "",
-        discordId: row[3] ? String(row[3]).trim() : "",
-        status: row[4] ? String(row[4]).trim().toLowerCase() : "active",
-/**
  * Helper to dynamically find column index by fuzzy matching header names
  */
 function findHeaderColumnIndex(headers, possibleNames) {
