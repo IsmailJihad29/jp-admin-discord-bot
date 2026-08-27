@@ -8,7 +8,7 @@
 
 var SCRIPT_VERSION = "v48";
 var CONFIG = {
-  SECRET_KEY: "CHANGE_THIS_SECRET_KEY", // Change this to your secret key
+  SECRET_KEY: "JP_ADMIN_26", // Synced with .env DEFAULT_GAS_SECRET
   TIMEZONE: "Asia/Dhaka"
 };
 

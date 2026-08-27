@@ -5,7 +5,7 @@
 
 module.exports = {
   BOT_VERSION: "v3.29",
-  EXPECTED_GAS_VERSION: "v47",
+  EXPECTED_GAS_VERSION: "v48",
   DEFAULT_TIMEZONE: "Asia/Dhaka",
 
   // Recognized Channels for auto-discovery and operations

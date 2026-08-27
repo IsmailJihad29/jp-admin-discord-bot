@@ -27,7 +27,7 @@ module.exports = {
         `**Bot Version:** \`${constants.BOT_VERSION}\``,
         `**Apps Script Backend:** \`${doctorRes.version || 'Offline'}\` (Expected: \`${constants.EXPECTED_GAS_VERSION}\`) ${isVersionMatch ? '✅' : '⚠️ *Version Mismatch!*'}`,
         `**Discord Permissions:** ${hasAdmin ? '✅ `Administrator` (Full access)' : '⚠️ *Missing Administrator permission*'}`,
-        `**Database Tabs Status:** ${missingTabs.length === 0 ? '✅ All 9 required tabs verified' : `❌ Missing ${missingTabs.length} tabs: \`${missingTabs.join(', ')}\``}`,
+        `**Database Tabs Status:** ${missingTabs.length === 0 ? '✅ All 10 core required tabs verified' : `❌ Missing ${missingTabs.length} tabs: \`${missingTabs.join(', ')}\``}`,
         `**Spreadsheet ID:** \`${doctorRes.spreadsheetId || 'N/A'}\``
       ].join('\n');
 
