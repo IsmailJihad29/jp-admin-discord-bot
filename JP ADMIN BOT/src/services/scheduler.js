@@ -85,7 +85,15 @@ class Scheduler {
 
   async runWeeklyRiskAndOneOnOneSchedule() {
     Logger.info("[WeeklyRiskAudit] Running Thursday 18:30 Drop-out Predictor & 1-on-1 Auto-Scheduler.");
+    const todayStr = DateTimeUtil.getTodayDateStr();
+
     for (const guild of this.client.guilds.cache.values()) {
+      const scoringStartDate = cohortManager.getScoringStartDate(guild.id);
+      if (scoringStartDate && todayStr < scoringStartDate) {
+        Logger.info(`[WeeklyRiskAudit] Skipping Thursday risk audit for guild ${guild.id}: Scoring reset until ${scoringStartDate}.`);
+        continue;
+      }
+
       await DropoutPredictorService.runWeeklyRiskAuditAndSchedule(guild);
       await ReferralLockoutService.enforceCohortAccessLocks(guild);
     }
@@ -264,6 +272,12 @@ class Scheduler {
           continue;
         }
 
+        const scoringStartDate = cohortManager.getScoringStartDate(guild.id);
+        if (scoringStartDate && todayDate < scoringStartDate) {
+          Logger.info(`[DailyJobAudit] Skipping 23:30 job audit for guild ${guild.id}: Scoring reset until ${scoringStartDate}.`);
+          continue;
+        }
+
         const cohort = cohortManager.getCohort(guild.id);
         const target = cohort?.targets?.applications || constants.SCORING.DEFAULT_JOB_TARGET;
 
@@ -366,8 +380,15 @@ class Scheduler {
    */
   async runWeeklyLeaderboard() {
     Logger.info("[WeeklyLeaderboard] Publishing Thursday 18:00 weekly leaderboard.");
+    const todayStr = DateTimeUtil.getTodayDateStr();
 
     for (const guild of this.client.guilds.cache.values()) {
+      const scoringStartDate = cohortManager.getScoringStartDate(guild.id);
+      if (scoringStartDate && todayStr < scoringStartDate) {
+        Logger.info(`[WeeklyLeaderboard] Skipping Thursday leaderboard for guild ${guild.id}: Scoring reset until ${scoringStartDate}.`);
+        continue;
+      }
+
       const channel = this.getChannel(guild, 'RTBR') || this.getChannel(guild, 'DISCUSSION');
       if (!channel) continue;
 

@@ -10,34 +10,34 @@ const DateTimeUtil = require('../../utils/dateTime');
 
 module.exports = {
   name: 'resetscores',
-  aliases: ['resetpoints', 'startweek', 'cleanscores', 'setstartdate', 'scoringstart'],
-  description: 'Resets all student scores and configures the scoring start date (defaults to Next Sunday)',
-  usage: '!resetscores [YYYY-MM-DD]',
-  supervisorOnly: true,
+  aliases: ['resetpoints', 'resetmarking', 'resetmarkings', 'startweek', 'cleanscores', 'setstartdate', 'scoringstart'],
+  description: 'Resets all student scores to 0 and configures scoring to start fresh from Next Sunday (no arguments needed)',
+  usage: '!resetscores [optional: YYYY-MM-DD]',
+  mentorOnly: true,
 
   async execute(message, args, client) {
     const guildId = message.guild.id;
 
-    // Calculate next Sunday (or use user supplied date)
+    // Automatically calculate next Sunday date if not provided
     let targetDate = args[0];
     if (!targetDate || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
-      // Default to 2026-08-30 (Next Sunday)
-      targetDate = "2026-08-30";
+      targetDate = DateTimeUtil.getNextSundayDate();
     }
 
     cohortManager.resetCohortScoring(guildId, targetDate);
 
     const embed = Embeds.success(
-      "Points Reset & Fresh Week Baseline Configured! 🔄",
-      `✅ **All leaderboard & scorecard points have been reset to 0.**\n\n` +
-      `• 📅 **Scoring Start Date:** **\`${targetDate}\` (Sunday)**\n` +
+      "Points Reset & Fresh Baseline Activated! 🔄",
+      `✅ **All student points, leaderboard rankings, and scorecard metrics have been reset to 0.**\n\n` +
+      `• 📅 **Fresh Scoring Starts:** **\`${targetDate}\` (Sunday)**\n` +
       `• 🗓️ **Mentorship Week Schedule:** **Sunday to Thursday (5 Days)**\n` +
-      `• 🎙️ **Interview Points:** \`+2 Points\`\n` +
-      `• 💼 **Daily Job Target:** \`10 Applications/day\` *(Use \`!settarget <num>\` to customize)*\n` +
+      `• 🔇 **Today's Automated Broadcasts:** **Muted** *(No leaderboard or daily audit posts will be published today)*\n` +
+      `• 🎙️ **Interview Reward:** \`+2 Points\`\n` +
+      `• 💼 **Daily Job Target:** \`10 Applications/day\` *(Use \`!settarget <num>\` to adjust)*\n` +
       `• 📅 **Attendance:** \`+1 Present\` / \`-1 Absent\` / \`0 Approved Leave\`\n` +
       `• 🛠️ **Hiring Tasks:** \`+1 Announced\` / \`+1 Approved\` / \`-2 Overdue\`\n\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `✨ **Starting from Sunday (\`${targetDate}\`), all new attendance, job applications, interview logs, and task submissions will be counted fresh for the week!**`,
+      `✨ **Starting this upcoming Sunday (\`${targetDate}\`), all attendance, job applications, interview logs, and task submissions will automatically begin counting as Week 1!**`,
       `JP ADMIN ${constants.BOT_VERSION} · Scoring Baseline Manager`
     );
 

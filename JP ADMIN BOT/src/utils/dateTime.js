@@ -36,6 +36,12 @@ class DateTimeUtil {
     return weekday >= 1 && weekday <= 4 || weekday === 7;
   }
 
+  static getNextSundayDate(timezone = 'Asia/Dhaka') {
+    const dt = this.now(timezone);
+    const daysUntilSunday = dt.weekday === 7 ? 7 : (7 - dt.weekday);
+    return dt.plus({ days: daysUntilSunday }).toFormat('yyyy-MM-dd');
+  }
+
   static formatRelative(isoString, timezone = 'Asia/Dhaka') {
     const dt = DateTime.fromISO(isoString).setZone(timezone);
     return dt.toRelative();
