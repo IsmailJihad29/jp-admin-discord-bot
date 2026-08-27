@@ -294,6 +294,100 @@ class InteractionHandler {
       }
       return;
     }
+
+    // 4. Smart Nudge Button Triggers
+    if (customId.startsWith('nudge_')) {
+      const cohortManager = require('../config/cohortManager');
+      if (!cohortManager.isMentor(interaction.guild.id, interaction.member)) {
+        return interaction.reply({ content: "❌ Access denied: Only Mentors can broadcast nudges.", ephemeral: true });
+      }
+
+      await interaction.deferReply({ ephemeral: true });
+      const nudgeType = customId.replace('nudge_', '');
+      const NudgeCmd = require('../commands/admin/nudge');
+
+      // Create a mock message wrapper to reuse NudgeCmd logic
+      const mockMsg = {
+        guild: interaction.guild,
+        channel: interaction.channel,
+        member: interaction.member,
+        author: interaction.user,
+        reply: (opts) => interaction.editReply(typeof opts === 'string' ? { content: opts } : opts)
+      };
+
+      if (nudgeType.startsWith('absent')) {
+        await NudgeCmd.execute(mockMsg, ['absent'], client);
+      } else {
+        await NudgeCmd.execute(mockMsg, [nudgeType], client);
+      }
+      return;
+    }
+
+    // 5. CSV Export Button Triggers
+    if (customId.startsWith('export_csv_')) {
+      const cohortManager = require('../config/cohortManager');
+      if (!cohortManager.isMentor(interaction.guild.id, interaction.member)) {
+        return interaction.reply({ content: "❌ Access denied: Only Mentors can export data.", ephemeral: true });
+      }
+
+      await interaction.deferReply({ ephemeral: true });
+      const exportType = customId.replace('export_csv_', '');
+      const ExportCmd = require('../commands/admin/export');
+
+      const mockMsg = {
+        guild: interaction.guild,
+        channel: interaction.channel,
+        member: interaction.member,
+        author: interaction.user,
+        reply: (opts) => interaction.editReply(typeof opts === 'string' ? { content: opts } : opts)
+      };
+
+      if (exportType.startsWith('absent')) {
+        await ExportCmd.execute(mockMsg, ['absent'], client);
+      } else if (exportType.startsWith('nosheet')) {
+        await ExportCmd.execute(mockMsg, ['nosheet'], client);
+      } else {
+        await ExportCmd.execute(mockMsg, ['summary'], client);
+      }
+      return;
+    }
+
+    // 6. Referral Access Toggle Button Trigger (from !inspect)
+    if (customId.startsWith('inspect_toggle_referral_')) {
+      const cohortManager = require('../config/cohortManager');
+      if (!cohortManager.isMentor(interaction.guild.id, interaction.member)) {
+        return interaction.reply({ content: "❌ Access denied: Only Mentors can change referral access.", ephemeral: true });
+      }
+
+      const targetDiscordId = customId.replace('inspect_toggle_referral_', '');
+      const targetMember = interaction.guild.members.cache.get(targetDiscordId);
+
+      if (!targetMember) {
+        return interaction.reply({ content: "❌ Target student member not found in server.", ephemeral: true });
+      }
+
+      const roleName = (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase();
+      let restrictRole = interaction.guild.roles.cache.find(r => r.name.toLowerCase() === roleName);
+
+      if (!restrictRole) {
+        restrictRole = await interaction.guild.roles.create({
+          name: constants.ROLES.REFERRAL_RESTRICTED,
+          color: '#ED4245',
+          reason: 'Auto-created for Referral Drive Lockout'
+        }).catch(() => null);
+      }
+
+      const isCurrentlyRestricted = targetMember.roles.cache.has(restrictRole?.id);
+
+      if (isCurrentlyRestricted) {
+        await targetMember.roles.remove(restrictRole);
+        await interaction.reply({ content: `✅ Successfully **UNLOCKED** Referral Drive access for <@${targetDiscordId}>!`, ephemeral: true });
+      } else {
+        await targetMember.roles.add(restrictRole);
+        await interaction.reply({ content: `🔒 Successfully **RESTRICTED** Referral Drive access for <@${targetDiscordId}>!`, ephemeral: true });
+      }
+      return;
+    }
   }
 
   static async handleModal(interaction, client) {

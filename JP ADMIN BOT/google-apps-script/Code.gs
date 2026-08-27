@@ -1953,7 +1953,13 @@ function setupBotCommandsManualTab(ss) {
     ["7. Guidelines & Help", "!mentor", "!giverole", "Supervisor", "#jp-admin", "!mentor <add/remove> @user", "Assigns or removes Mentor role and staff permissions."],
     ["7. Guidelines & Help", "!doctor", "!diagnose", "Mentor / Supervisor", "#jp-admin", "!doctor", "Full health check of Discord bot, GAS backend v50, and all database sheets."],
     ["7. Guidelines & Help", "!jp", "!askjp", "Everyone", "Any Channel", "!jp <Your Question>", "AI natural language assistant powered by Google Gemini AI."],
-    ["7. Guidelines & Help", "!help", "!commands", "Everyone", "Any Channel", "!help", "Shows general command help catalog."]
+    ["7. Guidelines & Help", "!help", "!commands", "Everyone", "Any Channel", "!help", "Shows general command help catalog."],
+
+    ["8. Data Intelligence & AI Analytics", "!query", "!askdata, !sheetquery", "Mentor / Supervisor", "#jp-admin", "!query <Natural Language Question>", "AI-powered cohort data query engine that scans all database tabs and provides answers."],
+    ["8. Data Intelligence & AI Analytics", "!data", "!analytics, !stats", "Mentor / Supervisor", "#jp-admin", "!data <nosheet/absent/nojobs/tasks/summary>", "Instant sub-second analytical filters and interactive action hubs across all sheets."],
+    ["8. Data Intelligence & AI Analytics", "!nudge", "!remind, !pingtarget", "Mentor / Supervisor", "#jp-admin", "!nudge <nosheet/nojobs/absent>", "Broadcasts automated targeted pings with guidelines to specific student groups."],
+    ["8. Data Intelligence & AI Analytics", "!export", "!downloadcsv, !csvexport", "Mentor / Supervisor", "#jp-admin", "!export [summary/nosheet/absent]", "Directly generates and attaches clean CSV data exports in Discord."],
+    ["8. Data Intelligence & AI Analytics", "!inspect", "!student, !deepcheck", "Mentor / Supervisor", "#jp-admin", "!inspect @student", "Comprehensive 360-degree student diagnostic console with referral lock/unlock control."]
   ];
 
   sheet.getRange(1, 1, rows.length, headers.length).setValues(rows);

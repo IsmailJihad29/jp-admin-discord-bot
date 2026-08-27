@@ -37,6 +37,9 @@ class Scheduler {
   }
 
   scheduleTimeline() {
+    // 0. Daily Mentor Morning Briefing - 09:30 AM Sun-Thu
+    cron.schedule('30 9 * * 0-4', () => this.runDailyAdminMorningBriefing(), { timezone: 'Asia/Dhaka' });
+
     // 1. Morning Attendance Point Scanner from 'Morning Attendance' Google Form Tab - 12:00 PM Sun-Thu
     cron.schedule('0 12 * * 0-4', () => this.runMorningAttendanceScan(), { timezone: 'Asia/Dhaka' });
 
@@ -57,6 +60,48 @@ class Scheduler {
 
     // 7. Drop-out Predictor & 1-on-1 Auto-Scheduler - 18:30 Thursday
     cron.schedule('30 18 * * 4', () => this.runWeeklyRiskAndOneOnOneSchedule(), { timezone: 'Asia/Dhaka' });
+  }
+
+  /**
+   * Daily Mentor Morning Briefing (Sunday–Thursday at 09:30 AM in #jp-admin)
+   */
+  async runDailyAdminMorningBriefing() {
+    Logger.info("[AdminBriefing] Running 09:30 AM Daily Admin Morning Briefing.");
+    const todayStr = DateTimeUtil.getTodayDateStr();
+    const CohortDataService = require('./cohortDataService');
+
+    for (const guild of this.client.guilds.cache.values()) {
+      try {
+        const adminCh = this.getChannel(guild, 'BOT_ADMIN');
+        if (!adminCh) continue;
+
+        const fullData = await CohortDataService.getFullCohortData(guild.id);
+        const unlinkedCount = fullData.students.filter(s => !s.hasTrackerLinked).length;
+        const onLeaveToday = fullData.students.filter(s => s.hasActiveLeaveToday);
+        const interviewsToday = fullData.students.filter(s => s.interviews.some(i => i.interviewDate === todayStr || i.date === todayStr));
+        const overdueTasksCount = fullData.students.filter(s => s.overdueTasksCount > 0).length;
+
+        const leaveNames = onLeaveToday.map(s => `• <@${s.discordId}> (${s.name})`).join('\n') || 'None on leave today';
+        const intNames = interviewsToday.map(s => `• <@${s.discordId}> (${s.name}) — ${s.interviews[0]?.company || 'Interview'}`).join('\n') || 'None scheduled for today';
+
+        const embed = Embeds.info(
+          `🌅 Daily Mentor Morning Briefing · ${todayStr}`,
+          `Good morning Mentors! Here is your daily operational summary for **${guild.name}**:\n\n` +
+          `👥 **Active Students:** **${fullData.totalActiveStudents} enrolled**\n` +
+          `⚠️ **Missing Job Trackers:** **${unlinkedCount} students** ${unlinkedCount > 0 ? '*(Run `!nudge nosheet`)*' : '✅ (All Linked)'}\n` +
+          `🛠️ **Overdue Coding Tasks:** **${overdueTasksCount} students**\n\n` +
+          `🌴 **Approved Leaves Today (${onLeaveToday.length}):**\n${leaveNames}\n\n` +
+          `🎯 **Interviews Today (${interviewsToday.length}):**\n${intNames}\n\n` +
+          `──────────────────────────────\n` +
+          `💡 *Quick commands:* \`!data summary\` · \`!data nojobs\` · \`!query <question>\``,
+          `JP ADMIN ${constants.BOT_VERSION} · Operations Digest`
+        );
+
+        await adminCh.send({ embeds: [embed] }).catch(() => {});
+      } catch (err) {
+        Logger.error(`Admin briefing error for guild ${guild.id}:`, err.message);
+      }
+    }
   }
 
   /**

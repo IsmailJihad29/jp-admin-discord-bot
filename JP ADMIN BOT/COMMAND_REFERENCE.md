@@ -104,3 +104,16 @@
 | **`!doctor`** | `!diagnose`, `!gasdoctor` | Mentor / Supervisor | `#jp-admin` | `!doctor` | বট, ডিসকর্ড এপিআই, গুগল শিটের v50 ব্যাকএন্ড এবং ১১টি ডেটাবেজ ট্যাবের সার্বিক সংযোগ ও স্বাস্থ্য পরীক্ষা করে। |
 | **`!jp`** | `!askjp` | Everyone | Any Channel | `!jp <আপনার প্রশ্ন>`<br>*Ex:* `!jp আমার লিডারবোর্ড স্কোর কীভাবে বাড়াব?` | Google Gemini AI চালিত ন্যাচারাল ল্যাঙ্গুয়েজ অ্যাসিস্ট্যান্ট যা কোহোর্ট সংক্রান্ত যেকোনো প্রশ্নের উত্তর দেয়। |
 | **`!help`** | `!commands`, `!bothelp` | Everyone | Any Channel | `!help` | বটের সাধারণ কমান্ড সহায়িকা ও ব্যবহার নির্দেশিকা প্রদর্শন করে। |
+
+---
+
+## 🧠 ৮. ডেটা ইন্টেলিজেন্স, এআই অ্যানালিটিক্স ও স্মার্ট নাডজ (Data Intelligence & AI Analytics)
+
+| কমান্ডের নাম (Command) | বিকল্প নাম (Aliases) | অনুমতি (Role) | অনুমোদিত চ্যানেল (Channel) | সিনট্যাক্স ও উদাহরণ (Syntax & Example) | কাজের বিস্তারিত বিবরণ (Description) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`!query`** | `!askdata`, `!sheetquery` | Mentor / Supervisor | `#jp-admin` | `!query <যেকোনো প্রশ্ন>`<br>*Ex:* `!query total absent student last 3 days`<br>*Ex:* `!query who has 0 job applications this week?` | Google Gemini AI চালিত ডেটা কোয়েরি ইঞ্জিন যা পুরো গুগল শিট ডেটাবেস স্ক্যান করে যেকোনো জটিল প্রশ্নের নিখুঁত উত্তর ও তালিকা দেয়। |
+| **`!data`** | `!analytics`, `!stats` | Mentor / Supervisor | `#jp-admin` | `!data <nosheet / absent / nojobs / tasks / leaves / summary>`<br>*Ex:* `!data nosheet`<br>*Ex:* `!data absent 3` | ১ সেকেন্ডের মধ্যে গুগল শিটের সকল ফিল্টারড রিপোর্ট (যেমন: মিসিং ট্র্যাকার, অনুপস্থিতি, কম অ্যাপ্লিকেশন) এবং ওয়ান-ক্লিক পিং বাটন প্রদর্শন করে। |
+| **`!nudge`** | `!remind`, `!pingtarget` | Mentor / Supervisor | `#jp-admin` | `!nudge <nosheet / nojobs / absent>`<br>*Ex:* `!nudge nosheet` | নির্দিষ্ট ক্যাটাগরির সকল শিক্ষার্থীকে স্বয়ংক্রিয়ভাবে তাদের চ্যানেলে এক ক্লিকে ট্যাগ করে সুন্দর রিমাইন্ডার ও গাইডলাইন নোটিশ পাঠায়। |
+| **`!export`** | `!downloadcsv`, `!csvexport` | Mentor / Supervisor | `#jp-admin` | `!export [summary / nosheet / absent]`<br>*Ex:* `!export summary` | যেকোনো ডেটা বা পুরো কোহোর্টের লাইভ পারফরম্যান্স শিট সরাসরি CSV ফাইল হিসেবে ডিসকর্ডে এটাচ করে দেয়। |
+| **`!inspect`** | `!student`, `!deepcheck` | Mentor / Supervisor | `#jp-admin` | `!inspect @student`<br>*Ex:* `!inspect @John` | নির্দিষ্ট কোনো শিক্ষার্থীর সার্বিক ৩৬০° হিস্ট্রি, অ্যাটেন্ডেন্স লগ, লিংক করা ট্র্যাকার শিট এবং রেফারেল লক/আনলক কন্ট্রোল প্যানেল ওপেন করে। |
+

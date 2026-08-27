@@ -177,6 +177,41 @@ Extract the following information and output strictly a valid JSON object with N
       rawDeadline: rawDeadline || deadlineDate
     };
   }
+
+  /**
+   * AI-Powered Natural Language Cohort Data Query Engine
+   */
+  async answerCohortDataQuery(userQuery, cohortSnapshot) {
+    if (!this.isConfigured()) {
+      return `⚠️ **Google Gemini AI is not configured.** Please check your \`GEMINI_API_KEY\` in \`.env\`. You can still use instant filter commands like \`!data absent 3\`, \`!data nosheet\`, \`!data summary\`.`;
+    }
+
+    try {
+      const prompt = `You are the Lead Data Analyst and Mentorship AI for the JP Career Mentorship Program.
+A mentor has asked the following data query about their cohort:
+"${userQuery}"
+
+Here is the complete live dataset snapshot of all active students across all Google Sheet database tabs:
+${JSON.stringify(cohortSnapshot, null, 2)}
+
+Instructions:
+1. Thoroughly analyze the snapshot to accurately answer the mentor's specific question.
+2. If listing students, format each student clearly as: • <@ID> (Name) — [Relevant metric/details].
+3. Include summary totals, percentages, and actionable insights for mentors.
+4. If the question is in English, Bengali, or Banglish, reply in the same natural, professional, and helpful language.
+5. Keep markdown formatting clean, structured with emojis, and ready to be displayed in a Discord embed.`;
+
+      const response = await this.ai.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: prompt
+      });
+
+      return response.text.trim();
+    } catch (err) {
+      Logger.error("Gemini cohort data query failed:", err.message);
+      return `⚠️ **AI Query Error:** ${err.message}. You can also run direct filter commands like \`!data nosheet\`, \`!data absent 3\`, or \`!data summary\`.`;
+    }
+  }
 }
 
 module.exports = new GeminiService();
