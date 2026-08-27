@@ -217,6 +217,7 @@ class InteractionHandler {
       const studentId = parts[1];
       const startDate = parts[2];
       const endDate = parts[3];
+      const origMessageId = parts[4];
 
       const cohortManager = require('../config/cohortManager');
       if (!cohortManager.isMentor(interaction.guild.id, interaction.member)) {
@@ -247,38 +248,43 @@ class InteractionHandler {
 
         await interaction.message.edit({ embeds: [embed], components: [] });
 
-        // NOTIFY THE STUDENT
+        // NOTIFY THE STUDENT VIA DIRECT REPLY IN #leave-request (NO PRIVATE INBOX DM)
         if (studentId) {
           const studentNotifyEmbed = isApprove
             ? Embeds.success(
                 "Leave Request Approved! 🎉",
-                `Hello <@${studentId}>, your leave request (**${reqId}**) has been **APPROVED** by <@${interaction.user.id}>!\n\n` +
-                (startDate && endDate ? `• 📅 **Approved Dates:** \`${startDate}\` to \`${endDate}\`\n` : '') +
-                `• ⭐ **Attendance Impact:** Marked as Excused Leave (\`L\`) with 0 absence penalty.\n\n` +
-                `*Take care and get back to your journey refreshed!*`
+                `Hello <@${studentId}>, **your leave request (${reqId}) has been APPROVED** by <@${interaction.user.id}>!\n\n` +
+                (startDate && endDate ? `• 📅 **Approved Dates:** \`${startDate}\` ${startDate !== endDate ? `to \`${endDate}\`` : '(Today)'}\n` : '') +
+                `• ⭐ **Attendance Status:** Marked as Excused Leave (\`L\`) with 0 absence penalty.\n\n` +
+                `*Take care and get back to your routine refreshed!*`
               )
             : Embeds.warning(
-                "Leave Request Update ⚠️",
+                "Leave Request Not Approved ⚠️",
                 `Hello <@${studentId}>, your leave request (**${reqId}**) was **REJECTED** by <@${interaction.user.id}>.\n\n` +
                 `*Please reach out to your mentor if you have any questions.*`
               );
 
-          // 1. Try sending DM
-          let dmSuccess = false;
-          try {
-            const studentUser = await client.users.fetch(studentId).catch(() => null);
-            if (studentUser) {
-              await studentUser.send({ embeds: [studentNotifyEmbed] });
-              dmSuccess = true;
+          const leaveChannel = ChannelHelper.findChannel(interaction.guild, 'LEAVE_REQUEST');
+          if (leaveChannel) {
+            let repliedToOriginal = false;
+            if (origMessageId) {
+              try {
+                const origMsg = await leaveChannel.messages.fetch(origMessageId).catch(() => null);
+                if (origMsg) {
+                  await origMsg.reply({ embeds: [studentNotifyEmbed] }).catch(() => {});
+                  if (isApprove) {
+                    origMsg.react('✅').catch(() => {});
+                  } else {
+                    origMsg.react('❌').catch(() => {});
+                  }
+                  repliedToOriginal = true;
+                }
+              } catch (fetchErr) {
+                Logger.debug('Could not fetch original leave message:', fetchErr.message);
+              }
             }
-          } catch (dmErr) {
-            Logger.debug(`Could not DM student ${studentId}:`, dmErr.message);
-          }
 
-          // 2. Fallback to leave request channel if DM not possible
-          if (!dmSuccess) {
-            const leaveChannel = ChannelHelper.findChannel(interaction.guild, 'LEAVE_REQUEST');
-            if (leaveChannel) {
+            if (!repliedToOriginal) {
               await leaveChannel.send({ content: `<@${studentId}>`, embeds: [studentNotifyEmbed] }).catch(() => {});
             }
           }

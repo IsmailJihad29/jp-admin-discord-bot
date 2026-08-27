@@ -341,11 +341,11 @@ class MessageHandler {
 
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder()
-            .setCustomId(`leave_approve_${res.requestId}_${studentId}_${start}_${end}`)
+            .setCustomId(`leave_approve_${res.requestId}_${studentId}_${start}_${end}_${message.id}`)
             .setLabel('✅ Approve Leave')
             .setStyle(ButtonStyle.Success),
           new ButtonBuilder()
-            .setCustomId(`leave_reject_${res.requestId}_${studentId}_${start}_${end}`)
+            .setCustomId(`leave_reject_${res.requestId}_${studentId}_${start}_${end}_${message.id}`)
             .setLabel('❌ Reject Leave')
             .setStyle(ButtonStyle.Danger)
         );
