@@ -75,7 +75,7 @@ module.exports = {
       `Click the button below to submit your GitHub Repository, Task Demo link, and Requirements doc link.\n\n` +
       `• **Student:** <@${message.author.id}>\n` +
       `• **Target Task:** \`${targetTaskId || 'Latest active task'}\`\n\n` +
-      `*Mentor review will be requested upon submission (+1 point upon approval).*`
+      `*Valid GitHub & Live Demo link submissions automatically earn **+1.0 Point**!*`
     );
 
     return message.reply({ embeds: [embed], components: [row] });

@@ -70,6 +70,70 @@ class InteractionHandler {
       }
     }
 
+    // 0.6 Interview Mentor Verification Button
+    if (customId.startsWith('interview_verify_')) {
+      const cohortManager = require('../config/cohortManager');
+      if (!cohortManager.isMentor(interaction.guild.id, interaction.member)) {
+        return interaction.reply({ content: "❌ Only Mentors & Supervisors can verify interview posts.", ephemeral: true });
+      }
+
+      await interaction.deferReply({ ephemeral: true });
+      const parts = customId.split('_');
+      const studentId = parts[2];
+      const company = decodeURIComponent(parts[3] || 'Company');
+      const role = decodeURIComponent(parts[4] || 'Software Engineer');
+      const date = parts[5] || DateTimeUtil.getTodayDateStr();
+      const messageId = parts[6];
+
+      try {
+        const studentMember = await interaction.guild.members.fetch(studentId).catch(() => null);
+        const studentName = studentMember?.displayName || studentMember?.user?.username || 'Student';
+
+        // Record to Google Sheets
+        await GasClient.recordInterview(interaction.guild.id, {
+          name: studentName,
+          discordId: studentId,
+          company: company,
+          serial: 1,
+          interviewDate: date,
+          roleDetails: role,
+          discordLink: interaction.message?.url || `https://discord.com/channels/${interaction.guild.id}/${interaction.channel.id}/${messageId}`
+        });
+
+        // Update original message button to disabled
+        const disabledRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('interview_verified_done')
+            .setLabel(`✅ Verified by ${interaction.member.displayName} (+1.0 Pt)`)
+            .setStyle(ButtonStyle.Success)
+            .setDisabled(true)
+        );
+        await interaction.message.edit({ components: [disabledRow] }).catch(() => {});
+
+        // React ✅ to original student message
+        if (messageId) {
+          const originalMsg = await interaction.channel.messages.fetch(messageId).catch(() => null);
+          if (originalMsg) {
+            originalMsg.reactions.removeAll().catch(() => {});
+            originalMsg.react('✅').catch(() => {});
+          }
+        }
+
+        const confirmEmbed = Embeds.success(
+          "Interview Verified! 🎯",
+          `✅ Interview at **${company}** for <@${studentId}> has been **verified** by <@${interaction.user.id}>.\n\n` +
+          `• 🏆 **Points Awarded:** \`+1.0 Point\`\n` +
+          `• 📅 **Date on Record:** \`${date}\``
+        );
+
+        await interaction.channel.send({ content: `<@${studentId}>`, embeds: [confirmEmbed] }).catch(() => {});
+        return interaction.editReply({ content: `✅ Verified interview for <@${studentId}>! +1.0 Point credited.` });
+      } catch (err) {
+        Logger.error("Failed to verify interview:", err.message);
+        return interaction.editReply({ content: `❌ Error verifying interview: ${err.message}` });
+      }
+    }
+
     // 1. Open Job Task Submission Modal
     if (customId.startsWith('open_task_modal_')) {
       const parts = customId.split('_');

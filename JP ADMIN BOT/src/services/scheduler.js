@@ -37,29 +37,20 @@ class Scheduler {
   }
 
   scheduleTimeline() {
-    // 0. Daily Mentor Morning Briefing - 09:30 AM Sun-Thu
+    // 1. Daily Mentor Morning Briefing - 09:30 AM Sun-Thu
     cron.schedule('30 9 * * 0-4', () => this.runDailyAdminMorningBriefing(), { timezone: 'Asia/Dhaka' });
 
-    // 1. Morning Attendance Point Scanner from 'Morning Attendance' Google Form Tab - 12:00 PM Sun-Thu
+    // 2. Morning Attendance Point Scanner from 'Morning Attendance' Google Form Tab - 12:00 PM Sun-Thu
     cron.schedule('0 12 * * 0-4', () => this.runMorningAttendanceScan(), { timezone: 'Asia/Dhaka' });
 
-    // 2. Daily Attendance Point Scanner from 'Daily Attendance' Google Form Tab - 23:00 Sun-Thu
-    cron.schedule('0 23 * * 0-4', () => this.runDailyAttendanceScan(), { timezone: 'Asia/Dhaka' });
+    // 3. Unified Daily Attendance Point Scanner & Inactivity Alerts - 23:45 Sun-Thu
+    cron.schedule('45 23 * * 0-4', () => this.runUnifiedDailyAttendanceScan(), { timezone: 'Asia/Dhaka' });
 
-    // 3. Daily Job Tracking Audit (Tiered Scoring & Warning Alerts) - 23:30 Daily
-    cron.schedule('30 23 * * *', () => this.runDailyJobAudit(), { timezone: 'Asia/Dhaka' });
+    // 4. Job Scraper (Leave Protected, Rate-Limited) & Task Overdue Engine - 00:05 Daily
+    cron.schedule('5 0 * * *', () => this.runJobScraperAndTaskOverdueEngine(), { timezone: 'Asia/Dhaka' });
 
-    // 4. Queued Custom Attendance Scanner - 23:30 Daily
-    cron.schedule('30 23 * * *', () => this.runQueuedCustomAttendanceScans(), { timezone: 'Asia/Dhaka' });
-
-    // 5. Job Task Deadline Overdue Monitor (-2 pts penalty) - 00:05 Daily
-    cron.schedule('5 0 * * *', () => this.runJobTaskDeadlineAudit(), { timezone: 'Asia/Dhaka' });
-
-    // 6. Weekly Performance Leaderboard & Referral Access Sync - 23:30 Thursday (11:30 PM)
-    cron.schedule('30 23 * * 4', () => this.runWeeklyLeaderboard(), { timezone: 'Asia/Dhaka' });
-
-    // 7. Drop-out Predictor & 1-on-1 Auto-Scheduler - 18:30 Thursday
-    cron.schedule('30 18 * * 4', () => this.runWeeklyRiskAndOneOnOneSchedule(), { timezone: 'Asia/Dhaka' });
+    // 5. Consolidated Weekly Closing & Leaderboard - 00:20 Fri (Thu night closing)
+    cron.schedule('20 0 * * 5', () => this.runConsolidatedWeeklyClosing(), { timezone: 'Asia/Dhaka' });
   }
 
   /**
@@ -150,15 +141,20 @@ class Scheduler {
   }
 
   /**
-   * Daily Attendance Scan from Google Form 'Daily Attendance' tab (Sunday–Thursday at 23:00)
-   * Applies +1 Present, -1 Absent, 0 Leave, and issues warning if a student hits 3 absences in the week.
+   * Unified Daily Attendance Scan (Sunday–Thursday at 23:45)
+   * Scans Daily Attendance Form + Queued Custom tabs, and alerts 3-day inactive students in a unified report.
    */
-  async runDailyAttendanceScan() {
-    Logger.info("[DailyAttendanceScan] Running 23:00 attendance scan.");
+  async runUnifiedDailyAttendanceScan() {
+    Logger.info("[UnifiedDailyAttendance] Running 23:45 unified attendance scan.");
     const todayStr = DateTimeUtil.getTodayDateStr();
 
     for (const guild of this.client.guilds.cache.values()) {
       try {
+        if (cohortManager.isOffday(guild.id, todayStr)) {
+          Logger.info(`[UnifiedDailyAttendance] Skipping attendance for guild ${guild.id}: Today is an Offday/Holiday.`);
+          continue;
+        }
+
         const res = await GasClient.scanDailyAttendance(guild.id, todayStr);
         if (res && res.status === 'SUCCESS') {
           const channel = this.getChannel(guild, 'ATTENDANCE') || this.getChannel(guild, 'BOT_ADMIN') || this.getChannel(guild, 'DISCUSSION');
@@ -167,11 +163,165 @@ class Scheduler {
             channel.send({ embeds: [embed] }).catch(() => {});
           }
 
-          // Check if any student reached 3 absences in the current week
+          // Check and run any queued custom tab scans
+          await this.runQueuedCustomAttendanceScans(guild);
+
+          // Check if any student reached 3 absences in the current week and issue alert
           await this.checkAndWarnInactiveStudents(guild);
         }
       } catch (err) {
         Logger.error(`Attendance scan error for guild ${guild.id}:`, err.message);
+      }
+    }
+  }
+
+  /**
+   * Job Scraper & Task Overdue Engine (Daily at 00:05)
+   * 1. Rate-limited scraping (1-2 sheets/sec) of full 24h job applications.
+   * 2. Leave Safety: Students with APPROVED leave on record are 100% protected (0 penalty, streak protected).
+   * 3. Task Overdue Monitor: Automatically deducts -1.0 penalty for tasks past deadline without submission.
+   */
+  async runJobScraperAndTaskOverdueEngine() {
+    Logger.info("[JobAndTaskEngine] Running 00:05 Job Scraper & Task Overdue Engine.");
+    const todayDate = DateTimeUtil.getTodayDateStr();
+
+    for (const guild of this.client.guilds.cache.values()) {
+      try {
+        if (cohortManager.isOffday(guild.id, todayDate)) {
+          Logger.info(`[JobAndTaskEngine] Skipping job audit for guild ${guild.id}: Today is an Offday/Holiday.`);
+          continue;
+        }
+
+        const scoringStartDate = cohortManager.getScoringStartDate(guild.id);
+        if (scoringStartDate && todayDate < scoringStartDate) {
+          Logger.info(`[JobAndTaskEngine] Skipping job audit for guild ${guild.id}: Scoring reset until ${scoringStartDate}.`);
+          continue;
+        }
+
+        const cohort = cohortManager.getCohort(guild.id);
+        const target = cohort?.targets?.applications || constants.SCORING.DEFAULT_JOB_TARGET;
+
+        // Fetch roster, linked sheets, and leaves once before the loop
+        const [rosterRes, sheetRes, leavesRes] = await Promise.all([
+          GasClient.getRoster(guild.id).catch(() => ({ students: [] })),
+          GasClient.request(guild.id, 'getJobSheets', {}).catch(() => ({ sheets: [] })),
+          GasClient.getLeaves(guild.id).catch(() => ({ leaves: [] }))
+        ]);
+
+        const activeStudents = (rosterRes.students || []).filter(s => s.status === 'active');
+        const studentSheetsMap = new Map((sheetRes.sheets || []).map(s => [s.discordId, s.sheetUrl]));
+        const approvedLeaves = (leavesRes.leaves || []).filter(l => String(l.status || '').toUpperCase() === 'APPROVED');
+
+        const metTargetList = [];
+        const belowTargetList = [];
+        const onLeaveList = [];
+
+        for (const student of activeStudents) {
+          const member = guild.members.cache.get(student.discordId);
+          if (member && cohortManager.isStaff(guild.id, member)) continue;
+
+          // ── Leave Safety Check ──
+          const isOnLeave = approvedLeaves.some(l => 
+            l.discordId === student.discordId &&
+            todayDate >= String(l.startDate || '').substring(0, 10) &&
+            todayDate <= String(l.endDate || l.startDate || '').substring(0, 10)
+          );
+
+          if (isOnLeave) {
+            onLeaveList.push(student);
+            // Record 0 points (Leave Protected)
+            await GasClient.recordJobDaily(guild.id, {
+              date: todayDate,
+              email: student.email,
+              count: 0,
+              name: student.name || student.username,
+              discordId: student.discordId,
+              totalRows: 0,
+              newRows: 0,
+              points: 0.0,
+              status: "ON_LEAVE"
+            }).catch(() => {});
+            continue;
+          }
+
+          let countToday = 0;
+          let totalRows = 0;
+          const sheetUrl = studentSheetsMap.get(student.discordId);
+
+          if (sheetUrl) {
+            const scrape = await JobScraperService.scrapeStudentJobSheet(sheetUrl, student.discordId);
+            if (scrape.success) {
+              countToday = scrape.datedTodayCount;
+              totalRows = scrape.totalRows;
+            }
+            // Rate-limited delay: 600ms per sheet request
+            await new Promise(r => setTimeout(r, 600));
+          }
+
+          const points = ScoringService.calculateDailyJobScore(countToday, target);
+
+          // Record daily metric to Google Sheets
+          await GasClient.recordJobDaily(guild.id, {
+            date: todayDate,
+            email: student.email,
+            count: countToday,
+            name: student.name || student.username,
+            discordId: student.discordId,
+            totalRows: totalRows,
+            newRows: countToday,
+            points: points
+          }).catch(() => {});
+
+          if (countToday >= target) {
+            metTargetList.push({ ...student, count: countToday, points });
+          } else {
+            belowTargetList.push({ ...student, count: countToday, points });
+          }
+        }
+
+        // Post Job Scraper Summary
+        const jobChannel = this.getChannel(guild, 'JOB_TRACKING');
+        if (jobChannel) {
+          const belowMentions = belowTargetList.map(s => `• <@${s.discordId}> (${s.name}): **${s.count}/${target}** apps (\`${s.points >= 0 ? '+' : ''}${s.points} pts\`)`).join('\n');
+          const metMentions = metTargetList.slice(0, 10).map(s => `• <@${s.discordId}> (${s.name}): **${s.count}/${target}** apps (\`+${s.points} pts\`)`).join('\n');
+          const leaveMentions = onLeaveList.map(s => `• <@${s.discordId}> (${s.name}) — 🌴 Protected (\`0.0 pts\`)`).join('\n');
+
+          const embed = Embeds.info(
+            `Daily Job Application Audit (12:05 AM) · ${todayDate}`,
+            `**Daily Target:** **${target} Applications**\n\n` +
+            `**🎯 Met / Exceeded Target (${metTargetList.length} students):**\n${metMentions || 'None yet'}\n\n` +
+            `**⚠️ Below Target (${belowTargetList.length} students):**\n${belowMentions || '✅ Everyone met their target today!'}\n\n` +
+            (onLeaveList.length > 0 ? `**🌴 Approved Leave Protected (${onLeaveList.length} students):**\n${leaveMentions}\n\n` : '') +
+            `*Tiered points calculated and synced to Google Sheets database.*`
+          );
+
+          await jobChannel.send({ embeds: [embed] }).catch(() => {});
+        }
+
+        // ── Execute Task Overdue Audit (-1.0 pt penalty) ──
+        await this.runJobTaskDeadlineAudit(guild);
+
+      } catch (err) {
+        Logger.error(`Job and Task engine error for guild ${guild.id}:`, err.message);
+      }
+    }
+  }
+
+  /**
+   * Consolidated Weekly Closing & Leaderboard (Friday at 00:20 AM / Thursday night closing)
+   * Publishes the weekly leaderboard to #referral-leaderboard and posts the At-Risk prediction report to #jp-admin.
+   */
+  async runConsolidatedWeeklyClosing() {
+    Logger.info("[WeeklyClosing] Running 00:20 consolidated weekly closing.");
+    for (const guild of this.client.guilds.cache.values()) {
+      try {
+        // 1. Publish Weekly Leaderboard with Role Mention (NO @everyone)
+        await this.runWeeklyLeaderboard(guild);
+
+        // 2. Publish Weekly At-Risk / Dropout Prediction Report to Mentor channel
+        await this.runWeeklyRiskAndOneOnOneSchedule(guild);
+      } catch (err) {
+        Logger.error(`Weekly closing error for guild ${guild.id}:`, err.message);
       }
     }
   }

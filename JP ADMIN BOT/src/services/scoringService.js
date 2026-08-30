@@ -8,29 +8,21 @@ const DateTimeUtil = require('../utils/dateTime');
 
 class ScoringService {
   /**
-   * Calculates points for a single day's job applications based on the custom tiered rules:
-   * - 100% target: +2.0 pts
-   * - 80% to 99%: +1.5 pts
-   * - 70% to 79%: +1.0 pt
-   * - 60% to 69%: +0.5 pt
-   * - < 60%: -0.5 pt
-   * - > 100%: Extra +1.0 pt (Total = 3.0 pts)
+   * Calculates points for a single day's job applications based on the re-balanced rules:
+   * - 100% target: +1.0 pt
+   * - 70% to 99%: +0.5 pt
+   * - < 70%: -0.5 pt
+   * - Bonus above 100%: None (+0.0)
    */
   static calculateDailyJobScore(count, target = 10) {
     if (target <= 0) target = 10;
     const tiers = constants.SCORING.JOB_TIERS;
     const ratio = count / target;
 
-    if (count > target) {
-      return tiers.FULL + tiers.EXTRA_BONUS; // 3.0 pts
-    } else if (ratio >= 1.0) {
-      return tiers.FULL; // 2.0 pts
-    } else if (ratio >= 0.8) {
-      return tiers.TIER_80; // 1.5 pts
+    if (ratio >= 1.0) {
+      return tiers.FULL; // +1.0 pt
     } else if (ratio >= 0.7) {
-      return tiers.TIER_70; // 1.0 pt
-    } else if (ratio >= 0.6) {
-      return tiers.TIER_60; // 0.5 pt
+      return tiers.TIER_70; // +0.5 pt
     } else {
       return tiers.BELOW_60; // -0.5 pt
     }

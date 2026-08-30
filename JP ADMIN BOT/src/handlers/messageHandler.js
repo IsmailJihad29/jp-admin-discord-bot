@@ -54,25 +54,23 @@ class MessageHandler {
   }
 
   /**
-   * Validates interview post format, then generates AI prep guide & awards points
+   * Verified Interview Hub: Validates format, marks Pending Verification, and allows mentor verification (+1.0 pt)
    */
   static async handleInterviewPost(message) {
     try {
       const studentId = message.author.id;
       const studentName = message.author.displayName || message.author.username;
 
-      // ── Step 1: Validate format BEFORE doing anything ──
+      // ── Step 1: Validate format (Company, Role, Date) ──
       const validation = await GeminiService.validateInterviewPost(message.content);
 
       if (!validation.valid) {
-        // React with warning emoji to flag the message
         message.react('⚠️').catch(() => {});
-
         const missingList = (validation.missingFields || []).map(f => `• ❌ **${f}**`).join('\n');
 
         const warningEmbed = Embeds.warning(
-          '⚠️ Invalid Interview Post Format — No Points Awarded',
-          `Hello <@${studentId}>, your message in <#${message.channel.id}> is **missing required information** and has **not been logged or awarded any points**.\n\n` +
+          '⚠️ Invalid Interview Post Format — Verification Pending Blocked',
+          `Hello <@${studentId}>, your message in <#${message.channel.id}> is **missing required information**.\n\n` +
           `**Missing Information:**\n${missingList || '• ❌ Insufficient interview details'}\n\n` +
           `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
           `📋 **Required Format — Copy & Fill In:**\n` +
@@ -81,105 +79,43 @@ class MessageHandler {
           `💼 Role: [Job Title / Position]\n` +
           `📅 Interview Date: [DD Month YYYY or YYYY-MM-DD]\n` +
           `🛠️ Tech Stack: [Languages / Frameworks] (optional)\n` +
-          `📝 Notes: [Any extra details] (optional)\n` +
+          `📷 Proof: [Attach screenshot / invitation email]\n` +
           `\`\`\`\n` +
-          `**Example:**\n` +
-          `\`\`\`\n` +
-          `🏢 Company: Brain Station 23\n` +
-          `💼 Role: Junior React Developer\n` +
-          `📅 Interview Date: 05 September 2026\n` +
-          `🛠️ Tech Stack: React, Node.js, MongoDB\n` +
-          `📝 Notes: Got the call today, interview is online!\n` +
-          `\`\`\`\n` +
-          `✏️ **Please edit your message or repost with the correct format to earn your \`+${
-            (() => { try { const cm = require('../config/cohortManager'); return cm.getCohortScoring(message.guild.id).interviewPoints; } catch(_) { return 2; } })()
-          } points\`!**`
+          `✏️ **Please edit your message or repost with the correct format to submit for mentor verification!**`
         );
-
         return message.reply({ embeds: [warningEmbed] }).catch(() => {});
       }
+      // ── Step 2: Valid post — Mark as Pending Verification ──
+      message.react('⏳').catch(() => {});
 
-      // ── Step 2: Valid post — proceed with logging & AI guide ──
-      message.react('🎯').catch(() => {});
+      const safeCompany = (validation.company || 'Company').substring(0, 30);
+      const safeRole = (validation.role || 'Role').substring(0, 30);
+      const safeDate = validation.interviewDate || DateTimeUtil.getTodayDateStr();
 
-      const cohortManager = require('../config/cohortManager');
-      const interviewPts = cohortManager.getCohortScoring(message.guild.id).interviewPoints;
+      const pendingEmbed = Embeds.info(
+        "⏳ Interview Call Logged — Pending Mentor Verification",
+        `Hello <@${studentId}>, your upcoming interview has been registered and is **awaiting mentor verification**!\n\n` +
+        `• 🏢 **Company:** **${safeCompany}**\n` +
+        `• 💼 **Role:** **${safeRole}**\n` +
+        `• 📅 **Interview Date:** \`${safeDate}\`\n` +
+        (validation.techStack ? `• 🛠️ **Tech Stack:** ${validation.techStack}\n` : '') +
+        `• 📷 **Attachment:** ${message.attachments.size > 0 ? `✅ ${message.attachments.size} file(s) attached` : '⚠️ No screenshot attached'}\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `✅ **Points (+1.0 Point) will be credited automatically once a Mentor or CR verifies this post with a ✅ reaction or by clicking Verify below.**`
+      );
 
-      // Record interview to Sheets
-      await GasClient.recordInterview(message.guild.id, {
-        name: studentName,
-        discordId: studentId,
-        company: validation.company || "Shared in Post",
-        serial: 1,
-        interviewDate: validation.interviewDate || DateTimeUtil.getTodayDateStr(),
-        roleDetails: (validation.role || '') + (validation.techStack ? ` | ${validation.techStack}` : '') || message.content.substring(0, 100),
-        discordLink: message.url
-      }).catch((e) => Logger.error("Failed to record interview:", e.message));
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`interview_verify_${studentId}_${encodeURIComponent(safeCompany)}_${encodeURIComponent(safeRole)}_${safeDate}_${message.id}`)
+          .setLabel('✅ Verify Interview (+1.0 Pt)')
+          .setStyle(ButtonStyle.Success)
+          .setEmoji('🎯')
+      );
 
-      // Generate Google Gemini AI 30-question master interview prep guide
-      const aiFeedback = await GeminiService.generateInterviewFeedback(message.content);
+      await message.reply({ embeds: [pendingEmbed], components: [row] }).catch(() => {});
 
-      // Split into clean chunks of max 3800 chars for Discord embeds
-      const maxLen = 3800;
-      const embeds = [];
-
-      if (aiFeedback.length <= maxLen) {
-        embeds.push(Embeds.success(
-          `🎯 Interview Logged (+${interviewPts} Points!) · 30-Question Master Prep Guide`,
-          aiFeedback
-        ));
-      } else {
-        const lines = aiFeedback.split('\n');
-        let currentChunk = "";
-        let partIndex = 1;
-
-        for (const line of lines) {
-          if ((currentChunk + '\n' + line).length > maxLen) {
-            embeds.push(Embeds.success(
-              partIndex === 1
-                ? `🎯 Interview Logged (+${interviewPts} Points!) · 30-Question Prep (Part 1)`
-                : `🎯 30-Question Prep Guide (Part ${partIndex})`,
-              currentChunk
-            ));
-            currentChunk = line;
-            partIndex++;
-          } else {
-            currentChunk += (currentChunk ? '\n' : '') + line;
-          }
-        }
-        if (currentChunk) {
-          embeds.push(Embeds.success(
-            `🎯 30-Question Prep Guide (Part ${partIndex})`,
-            currentChunk
-          ));
-        }
-      }
-
-      // Try creating a dedicated study thread for this interview
-      const thread = await message.startThread({
-        name: `🎯 Interview Prep: ${studentName} · ${validation.company || 'Company'}`,
-        autoArchiveDuration: 1440
-      }).catch(() => null);
-
-      if (thread) {
-        for (const emb of embeds) {
-          await thread.send({ embeds: [emb] }).catch(() => {});
-        }
-        const summaryEmbed = Embeds.success(
-          `🎯 Interview Logged (+${interviewPts} Points!)`,
-          `Awesome job <@${studentId}>! 🎉 Your interview at **${validation.company || 'the company'}** has been logged successfully.\n\n` +
-          `• 🏢 **Company:** ${validation.company || 'N/A'}\n` +
-          `• 💼 **Role:** ${validation.role || 'N/A'}\n` +
-          `• 📅 **Interview Date:** ${validation.interviewDate || 'Upcoming'}\n` +
-          `• ⭐ **Score Boost:** \`+${interviewPts} points\` added to your Leaderboard & RTBR score!\n\n` +
-          `👉 **Study the full 30-Question Prep Guide in the dedicated thread:** <#${thread.id}>`
-        );
-        message.reply({ embeds: [summaryEmbed] }).catch(() => {});
-      } else {
-        message.reply({ embeds: embeds.slice(0, 10) }).catch(() => {});
-      }
     } catch (e) {
-      Logger.error("Error handling interview post:", e.message);
+      Logger.error("Error handling interview post in channel:", e.message);
     }
   }
 

@@ -29,41 +29,42 @@ module.exports = {
   // Scoring configuration for Student Performance & Leaderboard
   SCORING: {
     // Attendance points (Sunday - Thursday from Google Form 'Daily Attendance' tab)
-    ATTENDANCE_PRESENT: 1,
-    ATTENDANCE_ABSENT: -1,
-    ATTENDANCE_LEAVE: 0,
+    ATTENDANCE_PRESENT: 1.0,
+    ATTENDANCE_ABSENT: -1.0,
+    ATTENDANCE_LEAVE: 0.0,
 
-    // Daily Job Scraping tiered points
+    // Daily Job Scraping tiered points (Bonus turned off)
     JOB_TIERS: {
-      FULL: 2.0,         // 100% of target (+2.0 pts)
-      TIER_80: 1.5,      // 80% to 99% (+1.5 pts)
-      TIER_70: 1.0,      // 70% to 79% (+1.0 pt)
-      TIER_60: 0.5,      // 60% to 69% (+0.5 pt)
-      BELOW_60: -0.5,    // Below 60% (-0.5 pt penalty)
-      EXTRA_BONUS: 1.0   // > 100% of target (+1 bonus, total = 3.0 pts)
+      FULL: 1.0,         // 100% of target (+1.0 pt)
+      TIER_80: 0.5,      // 70% to 99% (+0.5 pt)
+      TIER_70: 0.5,      // 70% to 99% (+0.5 pt)
+      TIER_60: -0.5,     // < 70% (-0.5 pt penalty)
+      BELOW_60: -0.5,    // < 70% (-0.5 pt penalty)
+      EXTRA_BONUS: 0.0   // Bonus turned off
     },
 
-    // Interview Prep Feedback (+2 points)
-    INTERVIEW_POINTS: 2,
+    // Verified Interview Points (+1.0 point upon mentor verification)
+    INTERVIEW_POINTS: 1.0,
 
     // Job Task Lifecycle points
-    TASK_ANNOUNCED: 1,       // Posted in #job-task-update (+1 pt)
-    TASK_APPROVED: 1,        // Approved by mentor via !submit (+1 pt)
-    TASK_MISSED_DEADLINE: -2,// Overdue without submission (-2 pts penalty)
+    TASK_ANNOUNCED: 1.0,       // Posted in #job-task-update (+1.0 pt)
+    TASK_SUBMITTED: 1.0,       // Submitted with valid links (+1.0 pt)
+    TASK_APPROVED: 1.0,        // Approved by mentor (+1.0 pt)
+    TASK_MISSED_DEADLINE: -1.0,// Overdue without submission (-1.0 pt penalty)
 
     // Streaks and Defaults
-    STREAK_BONUS_PER_DAY: 3,
-    STREAK_CAP: 15,
+    STREAK_BONUS_PER_DAY: 1.0,
+    STREAK_CAP: 5.0,
     DEFAULT_JOB_TARGET: 10
   },
 
   // Default Daily Timeline Schedule (Asia/Dhaka)
   DEFAULT_SCHEDULE: {
-    ATTENDANCE_SCAN: "23:00",          // 23:00 Sun-Thu
-    JOB_CHECK: "23:30",                // 23:30 Daily
-    TASK_DEADLINE_CHECK: "00:05",      // 00:05 Daily
-    WEEKLY_LEADERBOARD_THU: "18:00",   // 18:00 Thursday
-    WEEKLY_AT_RISK_THU: "18:30"        // 18:30 Thursday
+    MORNING_BRIEFING: "09:30",         // 09:30 Sun-Thu
+    MORNING_ATTENDANCE: "12:00",       // 12:00 Sun-Thu
+    UNIFIED_ATTENDANCE_SCAN: "23:45",  // 23:45 Sun-Thu
+    JOB_SCRAPER_AND_TASK: "00:05",     // 00:05 Daily
+    WEEKLY_CLOSING_LEADERBOARD: "00:20"// 00:20 Fri (Thu night closing)
   },
 
   // Roles

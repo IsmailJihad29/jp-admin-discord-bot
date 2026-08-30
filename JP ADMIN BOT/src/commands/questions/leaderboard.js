@@ -90,11 +90,11 @@ module.exports = {
       const embeds = Embeds.fullWeeklyLeaderboardEmbeds(
         `Cohort Performance Leaderboard · ${DateTimeUtil.getTodayDateStr()}`,
         standings,
-        "Includes Attendance (+1/-1), Job Applications, Streaks (+3/day), Interviews (+2), and Tasks"
+        "Scoring: Attendance (+1/-1), Job Tracker (+1/+0.5/-0.5), Streaks (+1/day), Verified Interviews (+1), Tasks (+1/+1/-1)"
       );
 
       const studentRole = guild.roles.cache.find(r => r.name.toLowerCase() === (constants.ROLES.ACTIVE_STUDENT || 'active student').toLowerCase());
-      const mentionTag = studentRole ? `@everyone <@&${studentRole.id}>` : `@everyone`;
+      const mentionTag = studentRole ? `<@&${studentRole.id}>` : '';
 
       // Determine target destination channel
       let destChannel = null;
@@ -111,8 +111,8 @@ module.exports = {
       }
 
       if (isPublishAction && destChannel && destChannel.id !== message.channel.id) {
-        // Broadcast embeds safely with @everyone mention to target channel
-        const broadcastHeader = `${mentionTag} 📢 **COHORT PERFORMANCE & RIGHT-TO-BE-REFERRED (RTBR) LEADERBOARD IS LIVE!** 🏆\n*Real-time student points & ranking calculated across all active activities:*`;
+        // Broadcast embeds safely with role mention only (NO @everyone)
+        const broadcastHeader = `${mentionTag ? `${mentionTag} ` : ''}📢 **COHORT PERFORMANCE & RIGHT-TO-BE-REFERRED (RTBR) LEADERBOARD IS LIVE!** 🏆\n*Real-time student points & ranking calculated across all active activities:*`;
         await sendEmbedsSafely(destChannel, embeds, broadcastHeader, null);
 
         const topStudent = standings[0];
@@ -121,12 +121,12 @@ module.exports = {
           `✅ Leaderboard successfully calculated and broadcasted across all **${standings.length} active students**.\n\n` +
           `• 🥇 **Top Rank:** ${topStudent ? `<@${topStudent.discordId}> (**${topStudent.totalPoints} pts**)` : 'N/A'}\n` +
           `• 👥 **Total Active Students:** **${standings.length}**\n` +
-          `• 📢 **Published to Channel:** <#${destChannel.id}> with \`@everyone\` mention.\n` +
+          `• 📢 **Published to Channel:** <#${destChannel.id}>\n` +
           `• ⏰ **Timestamp:** \`${DateTimeUtil.getFullTimestamp()}\``
         );
         await loading.edit({ content: null, embeds: [receiptEmbed] });
       } else {
-        await sendEmbedsSafely(message.channel, embeds, `${mentionTag} 📢 **Real-Time Student Performance Leaderboard:**`, loading);
+        await sendEmbedsSafely(message.channel, embeds, `${mentionTag ? `${mentionTag} ` : ''}📢 **Real-Time Student Performance Leaderboard:**`, loading);
       }
     } catch (err) {
       await loading.edit({ content: null, embeds: [Embeds.error("Leaderboard Error", err.message)] });
