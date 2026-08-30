@@ -353,6 +353,18 @@ class MessageHandler {
         reason: message.content.substring(0, 300)
       });
 
+      if (res && res.duplicate) {
+        message.react('⏳').catch(() => {});
+        const dupEmbed = Embeds.info(
+          "Leave Request Already on Record ⏳",
+          `Hello <@${studentId}>, you **already have an active leave request** (\`${res.requestId}\`) covering these dates.\n\n` +
+          `• 🆔 **Request ID:** \`${res.requestId}\`\n` +
+          `• 📅 **Status:** \`${res.existingStatus || 'PENDING'}\`\n\n` +
+          `🔔 *You will receive a notification as soon as mentors review it.*`
+        );
+        return message.reply({ embeds: [dupEmbed] }).catch(() => {});
+      }
+
       message.react('📝').catch(() => {});
 
       const studentEmbed = Embeds.info(

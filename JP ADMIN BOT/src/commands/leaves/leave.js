@@ -92,6 +92,17 @@ module.exports = {
             reason: reason
           });
 
+          if (res && res.duplicate) {
+            const dupEmbed = Embeds.info(
+              "Leave Request Already on Record ⏳",
+              `Hello <@${message.author.id}>, you **already have an active leave request** (\`${res.requestId}\`) covering these dates.\n\n` +
+              `• 🆔 **Request ID:** \`${res.requestId}\`\n` +
+              `• 📅 **Status:** \`${res.existingStatus || 'PENDING'}\`\n\n` +
+              `🔔 *You will receive a notification as soon as mentors review it.*`
+            );
+            return loadingMsg.edit({ content: null, embeds: [dupEmbed] });
+          }
+
           const studentEmbed = Embeds.info(
             "Leave Request Under Review ⏳",
             `Hello <@${message.author.id}>, **your leave request is under review.**\n\n` +
@@ -103,33 +114,33 @@ module.exports = {
 
           await loadingMsg.edit({ content: null, embeds: [studentEmbed] });
 
-            // Forward to Mentor/Admin channel for immediate review
-            const mentorChannel = ChannelHelper.findChannel(message.guild, 'BOT_ADMIN') || message.channel;
-            if (mentorChannel && mentorChannel.id !== message.channel.id) {
-              const mentorEmbed = Embeds.warning(
-                `📋 New Leave Request for Review (${res.requestId})`,
-                `• **Student:** <@${message.author.id}> (**${res.name || message.author.displayName || message.author.username}**)\n` +
-                `• **Email:** \`${res.email || 'Synced from All Data'}\`\n` +
-                `• **Phone:** \`${res.phone || 'Synced from All Data'}\`\n` +
-                `• **Dates:** \`${start}\` to \`${end}\`\n` +
-                `• **Reason:** ${reason}\n` +
-                `• **Submitted:** ${DateTimeUtil.getFullTimestamp()}\n\n` +
-                `*Review and click below to decide:*`
-              );
+          // Forward to Mentor/Admin channel for immediate review
+          const mentorChannel = ChannelHelper.findChannel(message.guild, 'BOT_ADMIN') || message.channel;
+          if (mentorChannel && mentorChannel.id !== message.channel.id) {
+            const mentorEmbed = Embeds.warning(
+              `📋 New Leave Request for Review (${res.requestId})`,
+              `• **Student:** <@${message.author.id}> (**${res.name || message.author.displayName || message.author.username}**)\n` +
+              `• **Email:** \`${res.email || 'Synced from All Data'}\`\n` +
+              `• **Phone:** \`${res.phone || 'Synced from All Data'}\`\n` +
+              `• **Dates:** \`${start}\` to \`${end}\`\n` +
+              `• **Reason:** ${reason}\n` +
+              `• **Submitted:** ${DateTimeUtil.getFullTimestamp()}\n\n` +
+              `*Review and click below to decide:*`
+            );
 
-              const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                  .setCustomId(`leave_approve_${res.requestId}_${message.author.id}_${start}_${end}_${message.id}`)
-                  .setLabel('✅ Approve Leave')
-                  .setStyle(ButtonStyle.Success),
-                new ButtonBuilder()
-                  .setCustomId(`leave_reject_${res.requestId}_${message.author.id}_${start}_${end}_${message.id}`)
-                  .setLabel('❌ Reject Leave')
-                  .setStyle(ButtonStyle.Danger)
-              );
+            const row = new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`leave_approve_${res.requestId}_${message.author.id}_${start}_${end}_${message.id}`)
+                .setLabel('✅ Approve Leave')
+                .setStyle(ButtonStyle.Success),
+              new ButtonBuilder()
+                .setCustomId(`leave_reject_${res.requestId}_${message.author.id}_${start}_${end}_${message.id}`)
+                .setLabel('❌ Reject Leave')
+                .setStyle(ButtonStyle.Danger)
+            );
 
-              await mentorChannel.send({ embeds: [mentorEmbed], components: [row] }).catch(() => {});
-            }
+            await mentorChannel.send({ embeds: [mentorEmbed], components: [row] }).catch(() => {});
+          }
           } catch (err) {
             await loadingMsg.edit({
               content: null,

@@ -56,10 +56,11 @@ class CatchupService {
         for (const message of messagesArray) {
           try {
             // Check if bot already reacted or replied to this message
-            const hasBotReaction = message.reactions.cache.some(r => r.me || r.users.cache.has(client.user.id));
-            const hasBotReply = fetchedMessages.some(m => m.reference?.messageId === message.id && m.author.id === client.user.id);
+            const botEmojis = ['📝', '✅', '⏳', '⚠️', '🎯', '🛠️', '📊', '👀'];
+            const hasBotEmojiReaction = message.reactions.cache.some(r => botEmojis.includes(r.emoji.name) || r.me || r.users.cache.has(client.user.id));
+            const hasBotReply = fetchedMessages.some(m => (m.reference?.messageId === message.id || m.interaction?.user?.id === message.author.id) && m.author.id === client.user.id);
 
-            if (hasBotReaction || hasBotReply) {
+            if (hasBotEmojiReaction || hasBotReply) {
               continue; // Already handled
             }
 

@@ -182,13 +182,17 @@ module.exports = {
         ? Embeds.warning('🔍 Interview Audit Complete', summaryDesc)
         : Embeds.success('🔍 Interview Audit Complete', summaryDesc);
 
-      await loading.edit({ content: null, embeds: [finalEmbed] });
+      await loading.edit({ content: null, embeds: [finalEmbed] }).catch(() => {
+        message.channel.send({ embeds: [finalEmbed] }).catch(() => {});
+      });
 
     } catch (err) {
       Logger.error('Interview audit failed:', err);
       await loading.edit({
         content: null,
         embeds: [Embeds.error('Audit Failed', `An error occurred during the audit: ${err.message}`)]
+      }).catch(() => {
+        message.channel.send({ embeds: [Embeds.error('Audit Failed', `An error occurred during the audit: ${err.message}`)] }).catch(() => {});
       });
     }
   }

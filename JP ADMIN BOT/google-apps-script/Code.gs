@@ -1920,6 +1920,47 @@ function submitLeaveRequest(ss, data) {
 
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function(h) { return String(h || "").toLowerCase().trim(); });
 
+  // Deduplication check: return existing record if student already has a pending/approved request for overlapping dates
+  if (sheet.getLastRow() > 1) {
+    var existingValues = sheet.getDataRange().getValues();
+    var dCol = -1, sCol = -1, eCol = -1, stCol = -1, idCol = -1;
+    for (var col = 0; col < headers.length; col++) {
+      var hd = headers[col];
+      if (hd.indexOf("discord") !== -1) dCol = col;
+      else if (hd.indexOf("start") !== -1) sCol = col;
+      else if (hd.indexOf("end") !== -1) eCol = col;
+      else if (hd.indexOf("status") !== -1) stCol = col;
+      else if (hd.indexOf("request") !== -1 && hd.indexOf("id") !== -1) idCol = col;
+    }
+
+    var reqStart = String(data.startDate || "").substring(0, 10);
+    var reqEnd = String(data.endDate || data.startDate || "").substring(0, 10);
+
+    for (var r = 1; r < existingValues.length; r++) {
+      var row = existingValues[r];
+      var rowDId = String(row[dCol] || "").trim();
+      var rowStart = String(row[sCol] || "").substring(0, 10);
+      var rowEnd = String(row[eCol] || "").substring(0, 10);
+      var rowStatus = String(row[stCol] || "").toUpperCase().trim();
+
+      if (rowDId === finalDiscordId && (rowStatus === 'PENDING' || rowStatus === 'APPROVED')) {
+        if ((reqStart >= rowStart && reqStart <= rowEnd) || (reqEnd >= rowStart && reqEnd <= rowEnd) || (rowStart >= reqStart && rowStart <= reqEnd)) {
+          // Already logged! Return existing record without duplicating row in Google Sheets
+          return {
+            status: "SUCCESS",
+            requestId: String(row[idCol] || ("LR-" + r)),
+            name: finalName,
+            email: finalEmail,
+            phone: finalPhone,
+            discordId: finalDiscordId,
+            duplicate: true,
+            existingStatus: rowStatus
+          };
+        }
+      }
+    }
+  }
+
   var newRow = new Array(headers.length);
   for (var c = 0; c < headers.length; c++) {
     var h = headers[c];
@@ -1945,7 +1986,8 @@ function submitLeaveRequest(ss, data) {
     name: finalName,
     email: finalEmail,
     phone: finalPhone,
-    discordId: finalDiscordId
+    discordId: finalDiscordId,
+    duplicate: false
   };
 }
 
