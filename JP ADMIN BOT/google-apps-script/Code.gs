@@ -23,7 +23,7 @@ var SCHEMA_DEFS = {
   "Attendance": ["Name", "Email", "Phone", "Discord ID", "Status", "Remarks"],
   "Daily Attendance": ["Timestamp", "Email Address", "Full Name", "Discord ID", "Attendance Status"],
   "Morning Attendance": ["Timestamp", "Email Address", "Full Name", "Discord ID", "Attendance Status"],
-  "Leave_Requests": ["Request ID", "Timestamp", "Discord ID", "Name", "Email", "Start Date", "End Date", "Reason", "Status", "Mentor Note"],
+  "Leave_Requests": ["Request ID", "Timestamp", "Discord ID", "Name", "Email", "Phone", "Start Date", "End Date", "Reason", "Status", "Mentor Note"],
   "Job_Sheets": ["Discord ID", "Name", "Email", "Sheet URL", "Sheet ID", "Tab GID", "Status", "Last Scraped"],
   "Jobs_Daily": ["Date", "Email", "Count", "Name", "Discord ID", "Total Rows", "New Rows", "Points"],
   "Interview_Log": ["Logged Date", "Name", "Discord ID", "Company", "Serial", "Interview Date", "Role Details", "Discord Link", "Timestamp"],
@@ -969,11 +969,21 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
   var approvedLeaves = {};
   if (leaveSheet && leaveSheet.getLastRow() > 1) {
     var leaveValues = leaveSheet.getDataRange().getValues();
+    var lHeaders = leaveValues[0].map(function(h) { return String(h || "").toLowerCase().trim(); });
+    var ldIdCol = -1, lStartCol = -1, lEndCol = -1, lStatusCol = -1;
+    for (var lc = 0; lc < lHeaders.length; lc++) {
+      var lh = lHeaders[lc];
+      if (lh.indexOf("discord") !== -1) ldIdCol = lc;
+      else if (lh.indexOf("start") !== -1) lStartCol = lc;
+      else if (lh.indexOf("end") !== -1) lEndCol = lc;
+      else if (lh.indexOf("status") !== -1) lStatusCol = lc;
+    }
+
     for (var l = 1; l < leaveValues.length; l++) {
-      var lDiscordId = String(leaveValues[l][2] || "").trim();
-      var lStart = parseDateToYMD(leaveValues[l][5]);
-      var lEnd = parseDateToYMD(leaveValues[l][6]);
-      var lStatus = String(leaveValues[l][8] || "").trim().toLowerCase();
+      var lDiscordId = String(ldIdCol !== -1 ? leaveValues[l][ldIdCol] : leaveValues[l][2] || "").trim();
+      var lStart = parseDateToYMD(lStartCol !== -1 ? leaveValues[l][lStartCol] : leaveValues[l][5]);
+      var lEnd = parseDateToYMD(lEndCol !== -1 ? leaveValues[l][lEndCol] : leaveValues[l][6]) || lStart;
+      var lStatus = String(lStatusCol !== -1 ? leaveValues[l][lStatusCol] : leaveValues[l][8] || "").trim().toLowerCase();
 
       if (lStatus === 'approved' && lDiscordId) {
         if (targetDate >= lStart && targetDate <= lEnd) {
@@ -1112,11 +1122,21 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
   var approvedLeaves = {};
   if (leaveSheet && leaveSheet.getLastRow() > 1) {
     var leaveValues = leaveSheet.getDataRange().getValues();
+    var lHeaders = leaveValues[0].map(function(h) { return String(h || "").toLowerCase().trim(); });
+    var ldIdCol = -1, lStartCol = -1, lEndCol = -1, lStatusCol = -1;
+    for (var lc = 0; lc < lHeaders.length; lc++) {
+      var lh = lHeaders[lc];
+      if (lh.indexOf("discord") !== -1) ldIdCol = lc;
+      else if (lh.indexOf("start") !== -1) lStartCol = lc;
+      else if (lh.indexOf("end") !== -1) lEndCol = lc;
+      else if (lh.indexOf("status") !== -1) lStatusCol = lc;
+    }
+
     for (var l = 1; l < leaveValues.length; l++) {
-      var lDiscordId = String(leaveValues[l][2] || "").trim();
-      var lStart = parseDateToYMD(leaveValues[l][5]);
-      var lEnd = parseDateToYMD(leaveValues[l][6]);
-      var lStatus = String(leaveValues[l][8] || "").trim().toLowerCase();
+      var lDiscordId = String(ldIdCol !== -1 ? leaveValues[l][ldIdCol] : leaveValues[l][2] || "").trim();
+      var lStart = parseDateToYMD(lStartCol !== -1 ? leaveValues[l][lStartCol] : leaveValues[l][5]);
+      var lEnd = parseDateToYMD(lEndCol !== -1 ? leaveValues[l][lEndCol] : leaveValues[l][6]) || lStart;
+      var lStatus = String(lStatusCol !== -1 ? leaveValues[l][lStatusCol] : leaveValues[l][8] || "").trim().toLowerCase();
 
       if (lStatus === 'approved' && lDiscordId) {
         if (targetDate >= lStart && targetDate <= lEnd) {
@@ -1340,11 +1360,21 @@ function scanCustomAttendanceFromForm(ss, customTabName, dateStr, customLabel) {
   var approvedLeaves = {};
   if (leaveSheet && leaveSheet.getLastRow() > 1) {
     var leaveValues = leaveSheet.getDataRange().getValues();
+    var lHeaders = leaveValues[0].map(function(h) { return String(h || "").toLowerCase().trim(); });
+    var ldIdCol = -1, lStartCol = -1, lEndCol = -1, lStatusCol = -1;
+    for (var lc = 0; lc < lHeaders.length; lc++) {
+      var lh = lHeaders[lc];
+      if (lh.indexOf("discord") !== -1) ldIdCol = lc;
+      else if (lh.indexOf("start") !== -1) lStartCol = lc;
+      else if (lh.indexOf("end") !== -1) lEndCol = lc;
+      else if (lh.indexOf("status") !== -1) lStatusCol = lc;
+    }
+
     for (var l = 1; l < leaveValues.length; l++) {
-      var lDiscordId = String(leaveValues[l][2] || "").trim();
-      var lStart = parseDateToYMD(leaveValues[l][5]);
-      var lEnd = parseDateToYMD(leaveValues[l][6]);
-      var lStatus = String(leaveValues[l][8] || "").trim().toLowerCase();
+      var lDiscordId = String(ldIdCol !== -1 ? leaveValues[l][ldIdCol] : leaveValues[l][2] || "").trim();
+      var lStart = parseDateToYMD(lStartCol !== -1 ? leaveValues[l][lStartCol] : leaveValues[l][5]);
+      var lEnd = parseDateToYMD(lEndCol !== -1 ? leaveValues[l][lEndCol] : leaveValues[l][6]) || lStart;
+      var lStatus = String(lStatusCol !== -1 ? leaveValues[l][lStatusCol] : leaveValues[l][8] || "").trim().toLowerCase();
 
       if (lStatus === 'approved' && lDiscordId) {
         if (targetDate >= lStart && targetDate <= lEnd) {
@@ -1717,47 +1747,245 @@ function removeHolidayData(ss, dateStr) {
  * 6. Leave Requests & Management
  * -------------------------------------------------------------------------
  */
+
+/**
+ * Searches and retrieves official Student Profile from Bot_Map and All Data
+ * by Discord ID, Email, Username, Phone, or Name.
+ */
+function findStudentProfile(ss, query) {
+  query = query || {};
+  var qDiscordId = String(query.discordId || "").trim();
+  var qEmail = String(query.email || "").toLowerCase().trim();
+  var qName = String(query.name || "").toLowerCase().trim();
+  var qUsername = String(query.username || "").toLowerCase().replace(/^@/, '').split('#')[0].trim();
+  var qPhone = String(query.phone || "").replace(/[^0-9]/g, '');
+
+  var botMapSheet = ss.getSheetByName("Bot_Map");
+  var allDataSheet = ss.getSheetByName("All Data");
+
+  var found = {
+    name: "",
+    email: "",
+    phone: "",
+    discordId: qDiscordId,
+    username: "",
+    region: "",
+    subregion: ""
+  };
+
+  // 1. Search in Bot_Map
+  if (botMapSheet && botMapSheet.getLastRow() > 1) {
+    var bmValues = botMapSheet.getDataRange().getValues();
+    for (var i = 1; i < bmValues.length; i++) {
+      var row = bmValues[i];
+      var email = String(row[0] || "").toLowerCase().trim();
+      var name = String(row[1] || "").trim();
+      var uName = String(row[2] || "").toLowerCase().replace(/^@/, '').split('#')[0].trim();
+      var dId = String(row[3] || "").trim();
+      var reg = String(row[5] || "").trim();
+      var subreg = String(row[6] || "").trim();
+      var phone = String(row[7] || "").trim();
+
+      var match = false;
+      if (qDiscordId && dId && qDiscordId === dId) match = true;
+      else if (qEmail && email && qEmail === email) match = true;
+      else if (qUsername && uName && qUsername === uName) match = true;
+      else if (qName && name && qName === name.toLowerCase()) match = true;
+      else if (qPhone && phone && qPhone.length >= 7 && phone.replace(/[^0-9]/g, '').indexOf(qPhone) !== -1) match = true;
+
+      if (match) {
+        found.name = name || found.name;
+        found.email = email || found.email;
+        found.phone = phone || found.phone;
+        found.discordId = dId || found.discordId;
+        found.username = String(row[2] || "") || found.username;
+        found.region = reg || found.region;
+        found.subregion = subreg || found.subregion;
+        break;
+      }
+    }
+  }
+
+  // 2. Search in All Data if name, email, or phone are still missing
+  if ((!found.name || !found.email || !found.phone) && allDataSheet && allDataSheet.getLastRow() > 1) {
+    var adValues = allDataSheet.getDataRange().getValues();
+    for (var j = 1; j < adValues.length; j++) {
+      var adRow = adValues[j];
+      var adName = String(adRow[0] || "").trim();
+      var adEmail = String(adRow[1] || "").toLowerCase().trim();
+      var adPhone = String(adRow[2] || "").trim();
+      var adUsername = String(adRow[3] || "").toLowerCase().replace(/^@/, '').split('#')[0].trim();
+      var adReg = String(adRow[4] || "").trim();
+      var adSubreg = String(adRow[5] || "").trim();
+
+      var adMatch = false;
+      if (found.email && adEmail && found.email.toLowerCase() === adEmail) adMatch = true;
+      else if (qEmail && adEmail && qEmail === adEmail) adMatch = true;
+      else if (qUsername && adUsername && qUsername === adUsername) adMatch = true;
+      else if (found.username && adUsername && found.username.toLowerCase().indexOf(adUsername) !== -1) adMatch = true;
+      else if (qName && adName && qName === adName.toLowerCase()) adMatch = true;
+      else if (found.name && adName && found.name.toLowerCase() === adName.toLowerCase()) adMatch = true;
+
+      if (adMatch) {
+        found.name = found.name || adName;
+        found.email = found.email || adEmail;
+        found.phone = found.phone || adPhone;
+        found.region = found.region || adReg;
+        found.subregion = found.subregion || adSubreg;
+        break;
+      }
+    }
+  }
+
+  return found;
+}
+
+/**
+ * Ensures Leave_Requests sheet has all required columns including Phone
+ */
+function ensureLeaveSheetHeader(sheet) {
+  if (!sheet) return;
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(SCHEMA_DEFS["Leave_Requests"]);
+    sheet.getRange(1, 1, 1, SCHEMA_DEFS["Leave_Requests"].length).setFontWeight("bold").setBackground("#e2e8f0");
+    return;
+  }
+  var headers = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0].map(function(h) { return String(h || "").trim(); });
+  var hasPhone = headers.some(function(h) { return /phone|mobile/i.test(h); });
+  if (!hasPhone) {
+    var emailIdx = -1;
+    for (var c = 0; c < headers.length; c++) {
+      if (/email/i.test(headers[c])) { emailIdx = c + 1; break; }
+    }
+    if (emailIdx > 0) {
+      sheet.insertColumnAfter(emailIdx);
+      sheet.getRange(1, emailIdx + 1).setValue("Phone").setFontWeight("bold").setBackground("#e2e8f0");
+    } else {
+      var nextCol = headers.length + 1;
+      sheet.getRange(1, nextCol).setValue("Phone").setFontWeight("bold").setBackground("#e2e8f0");
+    }
+  }
+}
+
 function submitLeaveRequest(ss, data) {
   var sheet = ss.getSheetByName("Leave_Requests");
+  if (!sheet) {
+    setupAllRequiredSheets(ss);
+    sheet = ss.getSheetByName("Leave_Requests");
+  }
   if (!sheet) return { error: "Leave_Requests sheet not found" };
+
+  var dId = String(data.discordId || "").trim();
+  var inputName = String(data.name || "").trim();
+  var inputEmail = String(data.email || "").trim();
+  var inputPhone = String(data.phone || "").trim();
+
+  // Auto-sync Student Profile from Bot_Map and All Data
+  var profile = findStudentProfile(ss, { discordId: dId, name: inputName, email: inputEmail, phone: inputPhone });
+
+  var finalName = profile.name || inputName || "Unknown Student";
+  var finalEmail = profile.email || inputEmail || "";
+  var finalPhone = profile.phone || inputPhone || "";
+  var finalDiscordId = profile.discordId || dId;
 
   var reqId = "LR-" + Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyyMMdd") + "-" + Utilities.getUuid().substring(0, 4).toUpperCase();
   var timestamp = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
 
-  sheet.appendRow([
-    reqId,
-    timestamp,
-    data.discordId || "",
-    data.name || "",
-    data.email || "",
-    data.startDate || "",
-    data.endDate || "",
-    data.reason || "",
-    "Pending",
-    ""
-  ]);
+  ensureLeaveSheetHeader(sheet);
 
-  return { status: "SUCCESS", requestId: reqId };
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function(h) { return String(h || "").toLowerCase().trim(); });
+
+  var newRow = new Array(headers.length);
+  for (var c = 0; c < headers.length; c++) {
+    var h = headers[c];
+    if (h.indexOf("request") !== -1 && h.indexOf("id") !== -1) newRow[c] = reqId;
+    else if (h.indexOf("timestamp") !== -1 || h.indexOf("date") === 0) newRow[c] = timestamp;
+    else if (h.indexOf("discord") !== -1) newRow[c] = finalDiscordId;
+    else if (h === "name" || h.indexOf("full name") !== -1 || h.indexOf("student") !== -1) newRow[c] = finalName;
+    else if (h.indexOf("email") !== -1) newRow[c] = finalEmail;
+    else if (h.indexOf("phone") !== -1 || h.indexOf("mobile") !== -1) newRow[c] = finalPhone;
+    else if (h.indexOf("start") !== -1) newRow[c] = data.startDate || "";
+    else if (h.indexOf("end") !== -1) newRow[c] = data.endDate || data.startDate || "";
+    else if (h.indexOf("reason") !== -1) newRow[c] = data.reason || "";
+    else if (h.indexOf("status") !== -1) newRow[c] = "Pending";
+    else if (h.indexOf("note") !== -1) newRow[c] = "";
+    else newRow[c] = "";
+  }
+
+  sheet.appendRow(newRow);
+
+  return {
+    status: "SUCCESS",
+    requestId: reqId,
+    name: finalName,
+    email: finalEmail,
+    phone: finalPhone,
+    discordId: finalDiscordId
+  };
 }
 
 function updateLeaveRequest(ss, data) {
   var sheet = ss.getSheetByName("Leave_Requests");
   if (!sheet) return { error: "Leave_Requests sheet not found" };
 
+  ensureLeaveSheetHeader(sheet);
+
   var values = sheet.getDataRange().getValues();
+  var headers = values[0].map(function(h) { return String(h || "").toLowerCase().trim(); });
   var targetRow = -1;
+  var rowData = null;
+
+  var reqIdCol = -1, discordIdCol = -1, nameCol = -1, emailCol = -1, phoneCol = -1, statusCol = -1, noteCol = -1;
+  for (var c = 0; c < headers.length; c++) {
+    var h = headers[c];
+    if (h.indexOf("request") !== -1 && h.indexOf("id") !== -1) reqIdCol = c;
+    else if (h.indexOf("discord") !== -1) discordIdCol = c;
+    else if (h === "name" || h.indexOf("full name") !== -1 || h.indexOf("student") !== -1) nameCol = c;
+    else if (h.indexOf("email") !== -1) emailCol = c;
+    else if (h.indexOf("phone") !== -1 || h.indexOf("mobile") !== -1) phoneCol = c;
+    else if (h.indexOf("status") !== -1) statusCol = c;
+    else if (h.indexOf("note") !== -1) noteCol = c;
+  }
 
   for (var i = 1; i < values.length; i++) {
-    if (String(values[i][0]).trim() === String(data.requestId).trim()) {
+    var rId = reqIdCol !== -1 ? values[i][reqIdCol] : values[i][0];
+    if (String(rId).trim() === String(data.requestId).trim()) {
       targetRow = i + 1;
+      rowData = values[i];
       break;
     }
   }
 
-  if (targetRow > 0) {
-    sheet.getRange(targetRow, 9).setValue(data.status); // Status
-    if (data.note) sheet.getRange(targetRow, 10).setValue(data.note);
-    return { status: "SUCCESS", requestId: data.requestId, updatedStatus: data.status };
+  if (targetRow > 0 && rowData) {
+    var curDiscordId = discordIdCol !== -1 ? String(rowData[discordIdCol] || "").trim() : "";
+    var curName = nameCol !== -1 ? String(rowData[nameCol] || "").trim() : "";
+    var curEmail = emailCol !== -1 ? String(rowData[emailCol] || "").trim() : "";
+    var curPhone = phoneCol !== -1 ? String(rowData[phoneCol] || "").trim() : "";
+
+    // Sync student profile from Bot_Map / All Data if missing
+    var profile = findStudentProfile(ss, { discordId: curDiscordId, name: curName, email: curEmail, phone: curPhone });
+
+    if (statusCol !== -1) sheet.getRange(targetRow, statusCol + 1).setValue(data.status);
+    if (noteCol !== -1 && data.note) sheet.getRange(targetRow, noteCol + 1).setValue(data.note);
+
+    if (nameCol !== -1 && profile.name && (!curName || curName === "Unknown Student")) {
+      sheet.getRange(targetRow, nameCol + 1).setValue(profile.name);
+    }
+    if (emailCol !== -1 && profile.email && !curEmail) {
+      sheet.getRange(targetRow, emailCol + 1).setValue(profile.email);
+    }
+    if (phoneCol !== -1 && profile.phone && !curPhone) {
+      sheet.getRange(targetRow, phoneCol + 1).setValue(profile.phone);
+    }
+
+    return {
+      status: "SUCCESS",
+      requestId: data.requestId,
+      updatedStatus: data.status,
+      name: profile.name || curName,
+      email: profile.email || curEmail,
+      phone: profile.phone || curPhone
+    };
   }
 
   return { error: "Leave request not found" };
@@ -1767,22 +1995,43 @@ function getLeavesList(ss, statusFilter) {
   var sheet = ss.getSheetByName("Leave_Requests");
   if (!sheet || sheet.getLastRow() <= 1) return { leaves: [] };
 
+  ensureLeaveSheetHeader(sheet);
+
   var values = sheet.getDataRange().getValues();
+  var headers = values[0].map(function(h) { return String(h || "").toLowerCase().trim(); });
+
+  var reqIdCol = -1, tsCol = -1, dIdCol = -1, nameCol = -1, emailCol = -1, phoneCol = -1, startCol = -1, endCol = -1, reasonCol = -1, statusCol = -1, noteCol = -1;
+  for (var c = 0; c < headers.length; c++) {
+    var h = headers[c];
+    if (h.indexOf("request") !== -1 && h.indexOf("id") !== -1) reqIdCol = c;
+    else if (h.indexOf("timestamp") !== -1) tsCol = c;
+    else if (h.indexOf("discord") !== -1) dIdCol = c;
+    else if (h === "name" || h.indexOf("full name") !== -1 || h.indexOf("student") !== -1) nameCol = c;
+    else if (h.indexOf("email") !== -1) emailCol = c;
+    else if (h.indexOf("phone") !== -1 || h.indexOf("mobile") !== -1) phoneCol = c;
+    else if (h.indexOf("start") !== -1) startCol = c;
+    else if (h.indexOf("end") !== -1) endCol = c;
+    else if (h.indexOf("reason") !== -1) reasonCol = c;
+    else if (h.indexOf("status") !== -1) statusCol = c;
+    else if (h.indexOf("note") !== -1) noteCol = c;
+  }
+
   var leaves = [];
 
   for (var i = 1; i < values.length; i++) {
     var row = values[i];
     var item = {
-      requestId: String(row[0]),
-      timestamp: String(row[1]),
-      discordId: String(row[2]),
-      name: String(row[3]),
-      email: String(row[4]),
-      startDate: String(row[5]),
-      endDate: String(row[6]),
-      reason: String(row[7]),
-      status: String(row[8]),
-      note: String(row[9])
+      requestId: String(reqIdCol !== -1 ? row[reqIdCol] : row[0] || ""),
+      timestamp: String(tsCol !== -1 ? row[tsCol] : row[1] || ""),
+      discordId: String(dIdCol !== -1 ? row[dIdCol] : row[2] || ""),
+      name: String(nameCol !== -1 ? row[nameCol] : row[3] || ""),
+      email: String(emailCol !== -1 ? row[emailCol] : row[4] || ""),
+      phone: String(phoneCol !== -1 ? row[phoneCol] : (row.length > 5 ? row[5] : "") || ""),
+      startDate: String(startCol !== -1 ? parseDateToYMD(row[startCol]) : row[5] || ""),
+      endDate: String(endCol !== -1 ? parseDateToYMD(row[endCol]) : row[6] || ""),
+      reason: String(reasonCol !== -1 ? row[reasonCol] : row[7] || ""),
+      status: String(statusCol !== -1 ? row[statusCol] : row[8] || ""),
+      note: String(noteCol !== -1 ? row[noteCol] : row[9] || "")
     };
 
     if (!statusFilter || item.status.toLowerCase() === statusFilter.toLowerCase()) {

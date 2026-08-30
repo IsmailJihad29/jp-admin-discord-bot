@@ -103,136 +103,142 @@ module.exports = {
 
           await loadingMsg.edit({ content: null, embeds: [studentEmbed] });
 
-          // Forward to Mentor/Admin channel for immediate review
-          const mentorChannel = ChannelHelper.findChannel(message.guild, 'BOT_ADMIN') || message.channel;
-          if (mentorChannel && mentorChannel.id !== message.channel.id) {
-            const mentorEmbed = Embeds.warning(
-              `📋 New Leave Request for Review (${res.requestId})`,
-              `• **Student:** <@${message.author.id}> (${message.author.displayName || message.author.username})\n` +
-              `• **Dates:** \`${start}\` to \`${end}\`\n` +
-              `• **Reason:** ${reason}\n` +
-              `• **Submitted:** ${DateTimeUtil.getFullTimestamp()}\n\n` +
-              `*Review and click below to decide:*`
-            );
+            // Forward to Mentor/Admin channel for immediate review
+            const mentorChannel = ChannelHelper.findChannel(message.guild, 'BOT_ADMIN') || message.channel;
+            if (mentorChannel && mentorChannel.id !== message.channel.id) {
+              const mentorEmbed = Embeds.warning(
+                `📋 New Leave Request for Review (${res.requestId})`,
+                `• **Student:** <@${message.author.id}> (**${res.name || message.author.displayName || message.author.username}**)\n` +
+                `• **Email:** \`${res.email || 'Synced from All Data'}\`\n` +
+                `• **Phone:** \`${res.phone || 'Synced from All Data'}\`\n` +
+                `• **Dates:** \`${start}\` to \`${end}\`\n` +
+                `• **Reason:** ${reason}\n` +
+                `• **Submitted:** ${DateTimeUtil.getFullTimestamp()}\n\n` +
+                `*Review and click below to decide:*`
+              );
 
-            const row = new ActionRowBuilder().addComponents(
-              new ButtonBuilder()
-                .setCustomId(`leave_approve_${res.requestId}_${message.author.id}_${start}_${end}_${message.id}`)
-                .setLabel('✅ Approve Leave')
-                .setStyle(ButtonStyle.Success),
-              new ButtonBuilder()
-                .setCustomId(`leave_reject_${res.requestId}_${message.author.id}_${start}_${end}_${message.id}`)
-                .setLabel('❌ Reject Leave')
-                .setStyle(ButtonStyle.Danger)
-            );
+              const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`leave_approve_${res.requestId}_${message.author.id}_${start}_${end}_${message.id}`)
+                  .setLabel('✅ Approve Leave')
+                  .setStyle(ButtonStyle.Success),
+                new ButtonBuilder()
+                  .setCustomId(`leave_reject_${res.requestId}_${message.author.id}_${start}_${end}_${message.id}`)
+                  .setLabel('❌ Reject Leave')
+                  .setStyle(ButtonStyle.Danger)
+              );
 
-            await mentorChannel.send({ embeds: [mentorEmbed], components: [row] }).catch(() => {});
+              await mentorChannel.send({ embeds: [mentorEmbed], components: [row] }).catch(() => {});
+            }
+          } catch (err) {
+            await loadingMsg.edit({
+              content: null,
+              embeds: [Embeds.error("Submission Failed", `Could not submit leave request: ${err.message}`)]
+            });
           }
-        } catch (err) {
-          await loadingMsg.edit({
-            content: null,
-            embeds: [Embeds.error("Submission Failed", `Could not submit leave request: ${err.message}`)]
-          });
+          return;
         }
-        return;
+
+        // If no arguments provided, show Interactive Form Button
+        const embed = Embeds.info(
+          "📝 Student Leave / Excused Absence Request",
+          "To request an excused absence, click the button below to open the form, or submit directly using:\n\n" +
+          "**Command Format:** `!leave <StartDate> <EndDate> <Reason>`\n" +
+          "*Example:* `!leave 2026-08-27 2026-08-28 Family emergency`\n\n" +
+          "💡 *Approved leave dates will be marked as excused (`L`) in Attendance and will not trigger absence penalties.*"
+        );
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`open_leave_modal_${message.author.id}`)
+            .setLabel('📝 Open Leave Request Form')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('📋')
+        );
+
+        return message.reply({ embeds: [embed], components: [row] });
       }
 
-      // If no arguments provided, show Interactive Form Button
-      const embed = Embeds.info(
-        "📝 Student Leave / Excused Absence Request",
-        "To request an excused absence, click the button below to open the form, or submit directly using:\n\n" +
-        "**Command Format:** `!leave <StartDate> <EndDate> <Reason>`\n" +
-        "*Example:* `!leave 2026-08-27 2026-08-28 Family emergency`\n\n" +
-        "💡 *Approved leave dates will be marked as excused (`L`) in Attendance and will not trigger absence penalties.*"
-      );
-
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`open_leave_modal_${message.author.id}`)
-          .setLabel('📝 Open Leave Request Form')
-          .setStyle(ButtonStyle.Primary)
-          .setEmoji('📋')
-      );
-
-      return message.reply({ embeds: [embed], components: [row] });
-    }
-
-    // -------------------------------------------------------------
-    // 2. MENTOR LEAVE REVIEW: !leaves [pending|approved|rejected|all]
-    // -------------------------------------------------------------
-    const isMentor = cohortManager.isMentor(guildId, message.member);
-    if (!isMentor) {
-      return message.reply({
-        embeds: [Embeds.warning(
-          "⚠️ Access Denied",
-          `Hello <@${message.author.id}>, only **Mentors & Supervisors** can review leave lists with \`!leaves\`.\n\n` +
-          `💡 *Students can submit a leave request using \`!leave\`.*`
-        )]
-      });
-    }
-
-    const filterArg = (args[0] || 'pending').toLowerCase();
-    const statusFilter = filterArg === 'all' ? null : (filterArg === 'approved' ? 'APPROVED' : (filterArg === 'rejected' ? 'REJECTED' : 'PENDING'));
-
-    const loading = await message.reply(`📋 **Fetching ${statusFilter || 'ALL'} leave requests from Google Sheets database...**`);
-
-    try {
-      const leaveData = await GasClient.getLeaves(guildId, statusFilter);
-      const list = leaveData.leaves || [];
-
-      if (list.length === 0) {
-        return loading.edit({
-          content: null,
-          embeds: [Embeds.success(
-            `No ${statusFilter || ''} Leave Requests`,
-            `✨ There are currently **no ${statusFilter ? statusFilter.toLowerCase() : ''} leave requests** in the database!`
+      // -------------------------------------------------------------
+      // 2. MENTOR LEAVE REVIEW: !leaves [pending|approved|rejected|all]
+      // -------------------------------------------------------------
+      const isMentor = cohortManager.isMentor(guildId, message.member);
+      if (!isMentor) {
+        return message.reply({
+          embeds: [Embeds.warning(
+            "⚠️ Access Denied",
+            `Hello <@${message.author.id}>, only **Mentors & Supervisors** can review leave lists with \`!leaves\`.\n\n` +
+            `💡 *Students can submit a leave request using \`!leave\`.*`
           )]
         });
       }
 
-      // Build complete master summary overview
-      const overviewLines = list.map((req, idx) => {
-        const statusIcon = req.status.toLowerCase() === 'approved' ? '✅' : (req.status.toLowerCase() === 'rejected' ? '❌' : '⏳');
-        return `**${idx + 1}. \`${req.requestId}\`** ${statusIcon} · <@${req.discordId}> (**${req.name}**)\n` +
-               `   • 📅 **Dates:** \`${req.startDate}\` to \`${req.endDate}\`\n` +
-               `   • 📝 **Reason:** ${req.reason}\n` +
-               `   • ⏰ **Submitted:** ${req.timestamp || 'N/A'}`;
-      });
+      const filterArg = (args[0] || 'pending').toLowerCase();
+      const statusFilter = filterArg === 'all' ? null : (filterArg === 'approved' ? 'APPROVED' : (filterArg === 'rejected' ? 'REJECTED' : 'PENDING'));
 
-      const overviewEmbed = Embeds.info(
-        `📋 ${statusFilter ? statusFilter.toUpperCase() : 'ALL'} Leave Requests (${list.length} Total)`,
-        overviewLines.slice(0, 15).join('\n\n') + (overviewLines.length > 15 ? `\n\n*...and ${overviewLines.length - 15} more requests.*` : '')
-      );
+      const loading = await message.reply(`📋 **Fetching ${statusFilter || 'ALL'} leave requests from Google Sheets database...**`);
 
-      await loading.edit({ content: null, embeds: [overviewEmbed] });
+      try {
+        const leaveData = await GasClient.getLeaves(guildId, statusFilter);
+        const list = leaveData.leaves || [];
 
-      // If viewing pending leaves, display interactive decision cards (up to 10)
-      if (statusFilter === 'PENDING') {
-        const pendingItems = list.slice(0, 10);
-        for (const req of pendingItems) {
-          const reqEmbed = Embeds.warning(
-            `Pending Review: ${req.requestId}`,
-            `• **Student:** <@${req.discordId}> (${req.name})\n` +
-            `• **Dates:** \`${req.startDate}\` to \`${req.endDate}\`\n` +
-            `• **Reason:** ${req.reason}\n` +
-            `• **Submitted:** ${req.timestamp}`
-          );
-
-          const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`leave_approve_${req.requestId}_${req.discordId}_${req.startDate}_${req.endDate}`)
-              .setLabel('✅ Approve')
-              .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-              .setCustomId(`leave_reject_${req.requestId}_${req.discordId}_${req.startDate}_${req.endDate}`)
-              .setLabel('❌ Reject')
-              .setStyle(ButtonStyle.Danger)
-          );
-
-          await message.channel.send({ embeds: [reqEmbed], components: [row] }).catch(() => {});
+        if (list.length === 0) {
+          return loading.edit({
+            content: null,
+            embeds: [Embeds.success(
+              `No ${statusFilter || ''} Leave Requests`,
+              `✨ There are currently **no ${statusFilter ? statusFilter.toLowerCase() : ''} leave requests** in the database!`
+            )]
+          });
         }
-      }
-    } catch (err) {
+
+        // Build complete master summary overview
+        const overviewLines = list.map((req, idx) => {
+          const statusIcon = req.status.toLowerCase() === 'approved' ? '✅' : (req.status.toLowerCase() === 'rejected' ? '❌' : '⏳');
+          const contactInfo = req.email || req.phone ? `\n   • 📞 **Contact:** ${req.email ? `📧 \`${req.email}\`` : ''} ${req.phone ? `· 📱 \`${req.phone}\`` : ''}` : '';
+          return `**${idx + 1}. \`${req.requestId}\`** ${statusIcon} · <@${req.discordId}> (**${req.name}**)` +
+                 contactInfo +
+                 `\n   • 📅 **Dates:** \`${req.startDate}\` to \`${req.endDate}\`` +
+                 `\n   • 📝 **Reason:** ${req.reason}` +
+                 `\n   • ⏰ **Submitted:** ${req.timestamp || 'N/A'}`;
+        });
+
+        const overviewEmbed = Embeds.info(
+          `📋 ${statusFilter ? statusFilter.toUpperCase() : 'ALL'} Leave Requests (${list.length} Total)`,
+          overviewLines.slice(0, 15).join('\n\n') + (overviewLines.length > 15 ? `\n\n*...and ${overviewLines.length - 15} more requests.*` : '')
+        );
+
+        await loading.edit({ content: null, embeds: [overviewEmbed] });
+
+        // If viewing pending leaves, display interactive decision cards (up to 10)
+        if (statusFilter === 'PENDING') {
+          const pendingItems = list.slice(0, 10);
+          for (const req of pendingItems) {
+            const reqEmbed = Embeds.warning(
+              `Pending Review: ${req.requestId}`,
+              `• **Student:** <@${req.discordId}> (**${req.name}**)\n` +
+              (req.email ? `• **Email:** \`${req.email}\`\n` : '') +
+              (req.phone ? `• **Phone:** \`${req.phone}\`\n` : '') +
+              `• **Dates:** \`${req.startDate}\` to \`${req.endDate}\`\n` +
+              `• **Reason:** ${req.reason}\n` +
+              `• **Submitted:** ${req.timestamp}`
+            );
+
+            const row = new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`leave_approve_${req.requestId}_${req.discordId}_${req.startDate}_${req.endDate}`)
+                .setLabel('✅ Approve')
+                .setStyle(ButtonStyle.Success),
+              new ButtonBuilder()
+                .setCustomId(`leave_reject_${req.requestId}_${req.discordId}_${req.startDate}_${req.endDate}`)
+                .setLabel('❌ Reject')
+                .setStyle(ButtonStyle.Danger)
+            );
+
+            await message.channel.send({ embeds: [reqEmbed], components: [row] }).catch(() => {});
+          }
+        }
+      } catch (err) {
       await loading.edit({ content: null, embeds: [Embeds.error("Leave Fetch Error", err.message)] });
     }
   }

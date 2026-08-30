@@ -491,7 +491,9 @@ class InteractionHandler {
       if (mentorChannel) {
         const mentorEmbed = Embeds.warning(
           `📋 New Leave Request for Review (${result.requestId})`,
-          `• **Student:** <@${interaction.user.id}> (${interaction.user.displayName || interaction.user.username})\n` +
+          `• **Student:** <@${interaction.user.id}> (**${result.name || interaction.user.displayName || interaction.user.username}**)\n` +
+          `• **Email:** \`${result.email || 'Synced from All Data'}\`\n` +
+          `• **Phone:** \`${result.phone || 'Synced from All Data'}\`\n` +
           `• **Dates:** \`${startDate}\` to \`${endDate}\`\n` +
           `• **Reason:** ${reason}\n\n` +
           `*Review and click below to decide:*`
