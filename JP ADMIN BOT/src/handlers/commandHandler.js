@@ -115,15 +115,9 @@ class CommandHandler {
         'myleave': { key: 'LEAVE_REQUEST', fallbackName: 'leave-request', purpose: 'checking your leave status' },
 
         // Job Task Submissions
-        'submit': { key: 'JOB_TASK', fallbackName: 'jobs-task-updates', purpose: 'submitting hiring task assignments' },
+        'submit': { key: 'JOB_TASK', fallbackName: 'jobs-task-updates', purpose: 'submitting hiring task assignments' }
 
-        // Performance & Leaderboards
-        'leaderboard': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'viewing cohort performance leaderboards' },
-        'rtbr': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'viewing referral priority rankings' },
-        'weeklyreport': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'viewing the weekly report' },
-        'topstudents': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'viewing top rankings' },
-        'ranks': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'checking cohort rankings' },
-        'fullleaderboard': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'viewing the full cohort leaderboard' }
+        // NOTE: Leaderboard commands have NO channel restriction — students can view from anywhere.
       };
 
       const mapping = STUDENT_CHANNEL_MAPPINGS[commandName];
