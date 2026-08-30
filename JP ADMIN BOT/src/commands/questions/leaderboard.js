@@ -62,10 +62,24 @@ module.exports = {
       ChannelHelper.isChannel(message.channel, 'BOT_ADMIN')
     );
 
+    // Students cannot publish — block early with a friendly message
+    if (!isMentor && (
+      firstArg === 'post' || firstArg === 'publish' || firstArg === 'broadcast' ||
+      commandName.includes('publish') || commandName.includes('postleaderboard')
+    )) {
+      return message.reply({
+        embeds: [Embeds.warning(
+          '⚠️ Mentor Only Action',
+          `Hello <@${message.author.id}>, **publishing the leaderboard is restricted to Mentors & Supervisors only.**\n\n` +
+          `💡 To *view* the leaderboard, simply use \`!leaderboard\` without any extra arguments.`
+        )]
+      });
+    }
+
     const loading = await message.reply("🏆 **Calculating real-time RTBR performance scores across all active students...**");
 
     try {
-      const standings = await ScoringService.calculateRTBR(guildId);
+      const standings = await ScoringService.calculateRTBR(guildId, guild);
 
       if (!standings || standings.length === 0) {
         return loading.edit({

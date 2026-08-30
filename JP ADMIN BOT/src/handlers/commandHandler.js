@@ -59,6 +59,13 @@ class CommandHandler {
     // Check Role-Based Permissions
     const isStaff = cohortManager.isStaff(message.guild.id, message.member);
 
+    // Commands that are explicitly public (any student can use)
+    const PUBLIC_COMMANDS = new Set([
+      'leaderboard', 'rtbr', 'weeklyreport', 'topstudents', 'fullleaderboard', 'ranks',
+      'leave', 'myleave', 'submit', 'myhealth', 'myprofile', 'mystatus', 'me',
+      'healthcheck', 'linksheet', 'mysheet', 'trackersheet', 'jobsheet', 'mytracker', 'help'
+    ]);
+
     if (command.supervisorOnly === true || command.ownerOnly === true) {
       const isSupervisor = cohortManager.isSupervisor(message.guild.id, message.member);
       if (!isSupervisor) {
@@ -71,7 +78,7 @@ class CommandHandler {
           )]
         });
       }
-    } else if (command.mentorOnly === true || command.supervisorOnly !== false) {
+    } else if (!PUBLIC_COMMANDS.has(commandName) && (command.mentorOnly === true || command.supervisorOnly !== false)) {
       const isMentor = cohortManager.isMentor(message.guild.id, message.member);
       if (!isMentor) {
         return message.reply({
@@ -115,7 +122,8 @@ class CommandHandler {
         'rtbr': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'viewing referral priority rankings' },
         'weeklyreport': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'viewing the weekly report' },
         'topstudents': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'viewing top rankings' },
-        'ranks': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'checking cohort rankings' }
+        'ranks': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'checking cohort rankings' },
+        'fullleaderboard': { key: 'RTBR', fallbackName: 'referral-leaderboard', purpose: 'viewing the full cohort leaderboard' }
       };
 
       const mapping = STUDENT_CHANNEL_MAPPINGS[commandName];

@@ -39,7 +39,7 @@ class ScoringService {
   /**
    * Calculates rolling 7-day / cumulative performance scores for all active students
    */
-  static async calculateRTBR(guildId) {
+  static async calculateRTBR(guildId, guild = null) {
     const cohortManager = require('../config/cohortManager');
     const scoring = cohortManager.getCohortScoring(guildId);
     const cohortTarget = scoring.jobTarget || constants.SCORING.DEFAULT_JOB_TARGET;
@@ -116,12 +116,37 @@ class ScoringService {
       return student;
     };
 
-    // 1. Ingest all students from Roster (Bot_Map / All Data)
+    // 1. Seed all students from Roster (Bot_Map / All Data)
     (rosterRes.students || []).forEach(s => {
       if (!isExcludedStatus(s.status)) {
         getOrCreateStudent(s);
       }
     });
+
+    // 1b. Seed from Discord guild members with Active Student role (catch any not in roster)
+    if (guild) {
+      try {
+        const activeStudentRoleName = (constants.ROLES.ACTIVE_STUDENT || 'active student').toLowerCase();
+        const activeRole = guild.roles.cache.find(r => r.name.toLowerCase() === activeStudentRoleName);
+        if (activeRole) {
+          // Fetch all members with this role
+          const members = activeRole.members;
+          members.forEach(member => {
+            if (!byDiscordId.has(member.id)) {
+              // Student is in Discord but missing from roster — add them with 0 pts
+              getOrCreateStudent({
+                discordId: member.id,
+                name: member.displayName || member.user.username,
+                username: member.user.username,
+                status: 'active'
+              });
+            }
+          });
+        }
+      } catch (e) {
+        // Non-fatal: continue without Discord member seeding
+      }
+    }
 
     // 2. Ingest any students from Attendance matrix tab
     const attRows = attendanceRes.rows || attendanceRes.attendance || [];
