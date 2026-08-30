@@ -232,7 +232,14 @@ class ScoringService {
 
     // 5. Process Interview Points (+2 pts)
     (interviewsRes.interviews || []).forEach(item => {
-      if (item.date && item.date < scoringStartDate) return;
+      const itemStatus = String(item.status || '').toUpperCase();
+      const companyName = String(item.company || '').toUpperCase();
+      // Skip voided / invalid interview entries
+      if (itemStatus === 'VOIDED' || companyName.startsWith('[VOIDED]')) return;
+
+      const itemDate = item.interviewDate || item.date || item.loggedDate;
+      if (itemDate && String(itemDate).substring(0, 10) < scoringStartDate) return;
+
       const student = getOrCreateStudent(item);
       if (student && !isExcludedStatus(student.status)) {
         student.interviewCount += 1;

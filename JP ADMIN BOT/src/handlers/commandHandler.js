@@ -61,7 +61,6 @@ class CommandHandler {
 
     // Commands that are explicitly public (any student can use)
     const PUBLIC_COMMANDS = new Set([
-      'leaderboard', 'rtbr', 'weeklyreport', 'topstudents', 'fullleaderboard', 'ranks',
       'leave', 'myleave', 'submit', 'myhealth', 'myprofile', 'mystatus', 'me',
       'healthcheck', 'linksheet', 'mysheet', 'trackersheet', 'jobsheet', 'mytracker', 'help'
     ]);
@@ -74,7 +73,7 @@ class CommandHandler {
             "⚠️ Access Denied",
             `Hello <@${message.author.id}>, **you are not allowed to use this command.**\n\n` +
             `This command (\`!${commandName}\`) is strictly restricted to **Supervisors & Administrators** only.\n\n` +
-            `💡 *Students can use commands like \`!leave\`, \`!submit\`, \`!myhealth\`, \`!linksheet\`, \`!leaderboard\`, and \`!help\`.*`
+            `💡 *Students can use commands like \`!leave\`, \`!submit\`, \`!myhealth\`, \`!linksheet\`, and \`!help\`.*`
           )]
         });
       }
@@ -86,7 +85,7 @@ class CommandHandler {
             "⚠️ Access Denied",
             `Hello <@${message.author.id}>, **you are not allowed to use this command.**\n\n` +
             `This command (\`!${commandName}\`) is strictly restricted to **Mentors & Supervisors** only.\n\n` +
-            `💡 *Students can use commands like \`!leave\`, \`!submit\`, \`!myhealth\`, \`!linksheet\`, \`!leaderboard\`, and \`!help\`.*`
+            `💡 *Students can use commands like \`!leave\`, \`!submit\`, \`!myhealth\`, \`!linksheet\`, and \`!help\`.*`
           )]
         });
       }

@@ -44,13 +44,26 @@ module.exports = {
   aliases: ['rtbr', 'weeklyreport', 'topstudents', 'fullleaderboard', 'ranks', 'publishleaderboard', 'postleaderboard', 'leaderboardpublish'],
   description: 'View real-time Right-To-Be-Referred (RTBR) performance leaderboards or publish them on-demand to student channels',
   usage: '!leaderboard | !leaderboard post [#channel] | !publishleaderboard',
-  supervisorOnly: false, // Students can view leaderboard
+  supervisorOnly: false,
+  mentorOnly: true,
 
   async execute(message, args, client) {
     const guild = message.guild;
     const guildId = guild.id;
     const isMentor = cohortManager.isMentor(guildId, message.member);
     const commandName = message.content.slice(1).split(/ +/)[0].toLowerCase();
+
+    // Strictly Mentor / Supervisor only
+    if (!isMentor) {
+      return message.reply({
+        embeds: [Embeds.warning(
+          "⚠️ Access Denied",
+          `Hello <@${message.author.id}>, **you are not allowed to use this command.**\n\n` +
+          `The Leaderboard command (\`!${commandName}\`) is strictly restricted to **Mentors & Supervisors** only.\n\n` +
+          `💡 *Students can use commands like \`!leave\`, \`!submit\`, \`!myhealth\`, \`!linksheet\`, and \`!help\`.*`
+        )]
+      });
+    }
 
     const firstArg = (args[0] || '').toLowerCase();
     const isPublishAction = isMentor && (
@@ -61,20 +74,6 @@ module.exports = {
       commandName.includes('postleaderboard') ||
       ChannelHelper.isChannel(message.channel, 'BOT_ADMIN')
     );
-
-    // Students cannot publish — block early with a friendly message
-    if (!isMentor && (
-      firstArg === 'post' || firstArg === 'publish' || firstArg === 'broadcast' ||
-      commandName.includes('publish') || commandName.includes('postleaderboard')
-    )) {
-      return message.reply({
-        embeds: [Embeds.warning(
-          '⚠️ Mentor Only Action',
-          `Hello <@${message.author.id}>, **publishing the leaderboard is restricted to Mentors & Supervisors only.**\n\n` +
-          `💡 To *view* the leaderboard, simply use \`!leaderboard\` without any extra arguments.`
-        )]
-      });
-    }
 
     const loading = await message.reply("🏆 **Calculating real-time RTBR performance scores across all active students...**");
 
