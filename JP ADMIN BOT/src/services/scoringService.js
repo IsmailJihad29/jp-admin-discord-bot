@@ -44,7 +44,7 @@ class ScoringService {
     const scoring = cohortManager.getCohortScoring(guildId);
     const cohortTarget = scoring.jobTarget || constants.SCORING.DEFAULT_JOB_TARGET;
 
-    // Fetch data from Apps Script backend for the 4 core components
+    // Fetch data from Apps Script backend for the core components
     const [rosterRes, jobsRes, interviewsRes, tasksRes, attendanceRes] = await Promise.all([
       GasClient.getRoster(guildId).catch(() => ({ students: [] })),
       GasClient.getJobsDaily(guildId, 7).catch(() => ({ jobs: [] })),
@@ -53,35 +53,90 @@ class ScoringService {
       GasClient.getAttendance(guildId).catch(() => ({ attendance: [] }))
     ]);
 
-    const activeStudents = (rosterRes.students || []).filter(s =>
-      s.status === 'active' && s.status !== 'supervisor' && s.status !== 'mentor' && s.status !== 'staff'
-    );
-    const studentMap = new Map();
+    const isExcludedStatus = (st) => {
+      const clean = String(st || "").toLowerCase().trim();
+      return clean === 'supervisor' || clean === 'mentor' || clean === 'staff' || clean === 'inactive' || clean === 'dropped' || clean === 'bot';
+    };
 
-    activeStudents.forEach(s => {
-      studentMap.set(s.discordId, {
-        discordId: s.discordId,
-        name: s.name || s.username,
-        email: s.email,
-        attendancePoints: 0,
-        jobPoints: 0,
-        jobTotalApps: 0,
-        streakBonus: 0,
-        interviewPoints: 0,
-        interviewCount: 0,
-        taskPoints: 0,
-        taskCount: 0,
-        totalPoints: 0
-      });
+    const studentsList = [];
+    const byDiscordId = new Map();
+    const byEmail = new Map();
+    const byUsername = new Map();
+    const byName = new Map();
+
+    const getOrCreateStudent = (data) => {
+      if (!data) return null;
+      const discordId = String(data.discordId || data.id || "").trim();
+      const email = String(data.email || "").toLowerCase().trim();
+      const rawUser = String(data.username || data.user || "").trim();
+      const username = rawUser.toLowerCase().replace(/^@/, '').split('#')[0].trim();
+      const name = String(data.name || data.studentName || data.displayName || "").trim();
+
+      // Check if student already exists in index
+      let student = null;
+      if (discordId && byDiscordId.has(discordId)) student = byDiscordId.get(discordId);
+      else if (email && byEmail.has(email)) student = byEmail.get(email);
+      else if (username && byUsername.has(username)) student = byUsername.get(username);
+      else if (name && byName.has(name.toLowerCase())) student = byName.get(name.toLowerCase());
+
+      if (!student) {
+        student = {
+          discordId: discordId,
+          name: name || username || email || (discordId ? `Student (${discordId.slice(-4)})` : 'Student'),
+          username: username || rawUser,
+          email: email,
+          phone: data.phone || '',
+          status: data.status || 'active',
+          attendancePoints: 0,
+          jobPoints: 0,
+          jobTotalApps: 0,
+          streakBonus: 0,
+          interviewPoints: 0,
+          interviewCount: 0,
+          taskPoints: 0,
+          taskCount: 0,
+          totalPoints: 0
+        };
+        studentsList.push(student);
+      } else {
+        // Enrich missing fields
+        if (!student.discordId && discordId) student.discordId = discordId;
+        if (!student.email && email) student.email = email;
+        if (!student.username && username) student.username = username;
+        if ((!student.name || student.name === 'Student') && name) student.name = name;
+        if (!student.phone && data.phone) student.phone = data.phone;
+      }
+
+      // Update index mappings
+      if (student.discordId) byDiscordId.set(student.discordId, student);
+      if (student.email) byEmail.set(student.email, student);
+      if (student.username) byUsername.set(student.username, student);
+      if (student.name) byName.set(student.name.toLowerCase(), student);
+
+      return student;
+    };
+
+    // 1. Ingest all students from Roster (Bot_Map / All Data)
+    (rosterRes.students || []).forEach(s => {
+      if (!isExcludedStatus(s.status)) {
+        getOrCreateStudent(s);
+      }
+    });
+
+    // 2. Ingest any students from Attendance matrix tab
+    const attRows = attendanceRes.rows || attendanceRes.attendance || [];
+    attRows.forEach(att => {
+      if (!isExcludedStatus(att.status)) {
+        getOrCreateStudent(att);
+      }
     });
 
     const scoringStartDate = scoring.scoringStartDate || "2026-08-30";
 
-    // 1. Daily & Morning Attendance Points (Present, Absent, Leave)
-    const attRows = attendanceRes.rows || attendanceRes.attendance || [];
+    // 3. Process Attendance Points
     attRows.forEach(att => {
-      const student = studentMap.get(att.discordId);
-      if (student) {
+      const student = getOrCreateStudent(att);
+      if (student && !isExcludedStatus(student.status)) {
         if (att.sessions && typeof att.sessions === 'object') {
           Object.entries(att.sessions).forEach(([sessionDate, mark]) => {
             // Only count attendance from scoringStartDate onwards
@@ -114,20 +169,24 @@ class ScoringService {
       }
     });
 
-    // 2. Job Application Tiered Scoring & Streaks
+    // 4. Process Job Application Tiered Scoring & Streaks
     const jobsByStudent = new Map();
     (jobsRes.jobs || []).forEach(j => {
-      // Filter by scoringStartDate
       if (j.date && j.date < scoringStartDate) return;
+      const targetStudent = getOrCreateStudent(j);
+      if (!targetStudent || isExcludedStatus(targetStudent.status)) return;
 
-      if (!jobsByStudent.has(j.discordId)) {
-        jobsByStudent.set(j.discordId, []);
+      const key = targetStudent.discordId || targetStudent.email || targetStudent.name;
+      if (!jobsByStudent.has(key)) {
+        jobsByStudent.set(key, []);
       }
-      jobsByStudent.get(j.discordId).push(j);
+      jobsByStudent.get(key).push(j);
     });
 
-    studentMap.forEach((student, discordId) => {
-      const studentJobs = jobsByStudent.get(discordId) || [];
+    studentsList.forEach(student => {
+      if (isExcludedStatus(student.status)) return;
+      const key = student.discordId || student.email || student.name;
+      const studentJobs = jobsByStudent.get(key) || [];
       let consecutiveDays = 0;
 
       studentJobs.forEach(jobDay => {
@@ -146,45 +205,45 @@ class ScoringService {
       student.streakBonus = Math.min(consecutiveDays * scoring.streakBonusPerDay, scoring.streakCap);
     });
 
-    // 3. Interview Points (+2 pts)
+    // 5. Process Interview Points (+2 pts)
     (interviewsRes.interviews || []).forEach(item => {
       if (item.date && item.date < scoringStartDate) return;
-
-      const student = studentMap.get(item.discordId);
-      if (student) {
+      const student = getOrCreateStudent(item);
+      if (student && !isExcludedStatus(student.status)) {
         student.interviewCount += 1;
         student.interviewPoints += scoring.interviewPoints;
       }
     });
 
-    // 4. Job Task Points
+    // 6. Process Job Task Points
     (tasksRes.tasks || []).forEach(task => {
       if (task.createdAt && task.createdAt < scoringStartDate) return;
-
-      const student = studentMap.get(task.discordId);
-      if (student) {
+      const student = getOrCreateStudent(task);
+      if (student && !isExcludedStatus(student.status)) {
         student.taskCount += 1;
         student.taskPoints += Number(task.pointsAwarded) || 0;
       }
     });
 
-    // Calculate total points and breakdown string
-    const results = Array.from(studentMap.values()).map(s => {
-      s.totalPoints = Math.round((
-        s.attendancePoints +
-        s.jobPoints +
-        s.streakBonus +
-        s.interviewPoints +
-        s.taskPoints
-      ) * 10) / 10;
+    // 7. Calculate total points and breakdown string for all students
+    const activeResults = studentsList
+      .filter(s => !isExcludedStatus(s.status))
+      .map(s => {
+        s.totalPoints = Math.round((
+          s.attendancePoints +
+          s.jobPoints +
+          s.streakBonus +
+          s.interviewPoints +
+          s.taskPoints
+        ) * 10) / 10;
 
-      s.details = `📅 Att: ${s.attendancePoints >= 0 ? '+' : ''}${s.attendancePoints}pts | 💼 Jobs: ${s.jobPoints >= 0 ? '+' : ''}${s.jobPoints}pts | 🎯 Int: +${s.interviewPoints}pts | 🛠️ Tasks: ${s.taskPoints >= 0 ? '+' : ''}${s.taskPoints}pts | 🔥 Streak: +${s.streakBonus}pts`;
-      return s;
-    });
+        s.details = `📅 Att: ${s.attendancePoints >= 0 ? '+' : ''}${s.attendancePoints}pts | 💼 Jobs: ${s.jobPoints >= 0 ? '+' : ''}${s.jobPoints}pts | 🎯 Int: +${s.interviewPoints}pts | 🛠️ Tasks: ${s.taskPoints >= 0 ? '+' : ''}${s.taskPoints}pts | 🔥 Streak: +${s.streakBonus}pts`;
+        return s;
+      });
 
     // Sort descending by totalPoints
-    results.sort((a, b) => b.totalPoints - a.totalPoints);
-    return results;
+    activeResults.sort((a, b) => b.totalPoints - a.totalPoints);
+    return activeResults;
   }
 }
 

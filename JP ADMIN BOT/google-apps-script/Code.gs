@@ -336,16 +336,27 @@ function getRosterData(ss) {
 
   var values = sheet ? sheet.getDataRange().getValues() : [];
   var students = [];
+  var seenEmails = {};
+  var seenIds = {};
+  var seenUsers = {};
+  var seenNames = {};
 
   if (values && values.length > 1) {
     for (var i = 1; i < values.length; i++) {
       var row = values[i];
+      var email = row[0] ? String(row[0]).trim().toLowerCase() : "";
+      var name = row[1] ? String(row[1]).trim() : "";
+      var username = row[2] ? String(row[2]).trim() : "";
+      var cleanUser = username.toLowerCase().replace(/^@/, '').split('#')[0].trim();
+      var discordId = row[3] ? String(row[3]).trim() : "";
+      var status = row[4] ? String(row[4]).trim().toLowerCase() : "active";
+
       var student = {
         email: row[0] ? String(row[0]).trim() : "",
-        name: row[1] ? String(row[1]).trim() : "",
-        username: row[2] ? String(row[2]).trim() : "",
-        discordId: row[3] ? String(row[3]).trim() : "",
-        status: row[4] ? String(row[4]).trim().toLowerCase() : "active",
+        name: name,
+        username: username,
+        discordId: discordId,
+        status: status || "active",
         region: row[5] ? String(row[5]).trim() : "",
         subregion: row[6] ? String(row[6]).trim() : "",
         phone: row[7] ? String(row[7]).trim() : "",
@@ -353,14 +364,18 @@ function getRosterData(ss) {
         reviewNote: row[9] ? String(row[9]).trim() : "",
         rowIndex: i + 1
       };
-      if (student.discordId || student.email || student.name) {
+      if (discordId || email || name) {
         students.push(student);
+        if (email) seenEmails[email] = true;
+        if (discordId) seenIds[discordId] = true;
+        if (cleanUser) seenUsers[cleanUser] = true;
+        if (name) seenNames[name.toLowerCase()] = true;
       }
     }
   }
 
-  // Fallback: If Bot_Map is empty, load directly from 'All Data' master tab using dynamic headers
-  if (students.length === 0 && allDataSheet && allDataSheet.getLastRow() > 1) {
+  // Also include any students from 'All Data' master tab that aren't yet in Bot_Map
+  if (allDataSheet && allDataSheet.getLastRow() > 1) {
     var allDataRows = allDataSheet.getDataRange().getValues();
     var headers = allDataRows[0];
 
@@ -371,21 +386,21 @@ function getRosterData(ss) {
     var regionCol = findHeaderColumnIndex(headers, ["Region", "Location"]);
     var subregionCol = findHeaderColumnIndex(headers, ["Subregion", "Area"]);
 
-    if (nameCol === -1) nameCol = 0;
-    if (emailCol === -1) emailCol = 1;
-    if (phoneCol === -1) phoneCol = 2;
-    if (discordCol === -1) discordCol = 3;
-
     for (var k = 1; k < allDataRows.length; k++) {
       var aRow = allDataRows[k];
       var aName = String(nameCol >= 0 ? aRow[nameCol] : "").trim();
       var aEmail = String(emailCol >= 0 ? aRow[emailCol] : "").trim();
       var aPhone = String(phoneCol >= 0 ? aRow[phoneCol] : "").trim();
       var aUsername = String(discordCol >= 0 ? aRow[discordCol] : "").trim();
+      var cleanUserA = aUsername.toLowerCase().replace(/^@/, '').split('#')[0].trim();
       var aRegion = String(regionCol >= 0 ? aRow[regionCol] : "").trim();
       var aSubregion = String(subregionCol >= 0 ? aRow[subregionCol] : "").trim();
 
-      if (aName || aEmail || aUsername) {
+      var isKnown = (aEmail && seenEmails[aEmail.toLowerCase()]) ||
+                    (cleanUserA && seenUsers[cleanUserA]) ||
+                    (aName && seenNames[aName.toLowerCase()]);
+
+      if (!isKnown && (aName || aEmail || aUsername)) {
         students.push({
           email: aEmail,
           name: aName,
@@ -399,6 +414,9 @@ function getRosterData(ss) {
           reviewNote: "",
           rowIndex: k + 1
         });
+        if (aEmail) seenEmails[aEmail.toLowerCase()] = true;
+        if (cleanUserA) seenUsers[cleanUserA] = true;
+        if (aName) seenNames[aName.toLowerCase()] = true;
       }
     }
   }

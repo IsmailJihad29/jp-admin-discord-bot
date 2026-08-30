@@ -96,8 +96,9 @@ class Embeds {
     let topDesc = `📊 **Top 10 High Performers · Right-To-Be-Referred (RTBR)**\n\n`;
     topDesc += top10.map((e, idx) => {
       const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `**#${idx + 1}**`;
-      const nameStr = e.name ? `(**${e.name}**)` : '';
-      return `${medal} <@${e.discordId}> ${nameStr} ➔ **${e.totalPoints} PTS**\n   ↳ ${e.details || ''}`;
+      const studentTag = e.discordId ? `<@${e.discordId}>` : `**${e.name || e.username || e.email || 'Student'}**`;
+      const nameStr = (e.discordId && e.name && e.name !== e.discordId) ? `(**${e.name}**)` : '';
+      return `${medal} ${studentTag} ${nameStr} ➔ **${e.totalPoints} PTS**\n   ↳ ${e.details || ''}`;
     }).join('\n\n');
 
     topDesc += `\n\n──────────────────────────────\n` +
@@ -129,8 +130,9 @@ class Embeds {
       let restDesc = `📋 **Cohort Performance Standings (Ranks #${startRank} – #${endRank}):**\n\n`;
       restDesc += chunk.map((e, cIdx) => {
         const rankNum = startRank + cIdx;
-        const nameStr = e.name ? `(${e.name})` : '';
-        return `**#${rankNum}** <@${e.discordId}> ${nameStr} — **${e.totalPoints} pts** ${e.details ? `\n   ↳ *${e.details}*` : ''}`;
+        const studentTag = e.discordId ? `<@${e.discordId}>` : `**${e.name || e.username || e.email || 'Student'}**`;
+        const nameStr = (e.discordId && e.name && e.name !== e.discordId) ? `(${e.name})` : '';
+        return `**#${rankNum}** ${studentTag} ${nameStr} — **${e.totalPoints} pts** ${e.details ? `\n   ↳ *${e.details}*` : ''}`;
       }).join('\n');
 
       if (restDesc.length > 3800) {
