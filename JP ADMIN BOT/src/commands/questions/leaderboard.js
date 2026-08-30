@@ -11,7 +11,7 @@ const constants = require('../../config/constants');
 const DateTimeUtil = require('../../utils/dateTime');
 
 async function sendEmbedsSafely(targetChannel, embeds, initialContent = null, loadingMsgToEdit = null) {
-  const MAX_EMBEDS_PER_MSG = 2;
+  const MAX_EMBEDS_PER_MSG = 1; // Discord per-message combined embed limit is 6000 chars total
   const batches = [];
 
   for (let i = 0; i < embeds.length; i += MAX_EMBEDS_PER_MSG) {

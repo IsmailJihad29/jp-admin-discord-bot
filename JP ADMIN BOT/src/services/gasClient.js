@@ -170,6 +170,15 @@ class GasClient {
     return this.request(guildId, 'getInterviews', { days });
   }
 
+  static async getAllInterviews(guildId) {
+    // days=0 → all-time (no cutoff filter in GAS)
+    return this.request(guildId, 'getInterviews', { days: 0 });
+  }
+
+  static async voidInterview(guildId, discordLink, discordId, loggedDate, reason) {
+    return this.request(guildId, 'voidInterview', { discordLink, discordId, loggedDate, reason });
+  }
+
   static async recordWorkshop(guildId, workshopData) {
     return this.request(guildId, 'recordWorkshop', workshopData);
   }

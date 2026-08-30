@@ -1,9 +1,9 @@
 /**
  * Command: !jp
- * Conversational Command Assistant powered by Groq AI (llama-3.3-70b)
+ * Conversational Command Assistant powered by Google Gemini AI
  */
 
-const GroqService = require('../../services/groqService');
+const GeminiService = require('../../services/geminiService');
 const Embeds = require('../../utils/embedBuilder');
 
 module.exports = {
@@ -23,11 +23,11 @@ module.exports = {
     }
 
     const query = args.join(' ');
-    const loading = await message.reply("🧠 Analyzing request with Groq AI...");
+    const loading = await message.reply('🧠 Analyzing request with Gemini AI...');
 
     try {
       const catalog = commandHandler.getCatalog();
-      const result = await GroqService.parseNaturalQuery(query, catalog);
+      const result = await GeminiService.parseNaturalQuery(query, catalog);
 
       if (result.clarifyingQuestion) {
         return loading.edit({

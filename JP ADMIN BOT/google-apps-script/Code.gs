@@ -170,6 +170,9 @@ function doPost(e) {
       case "recordInterview":
         return jsonResponse(recordInterviewEntry(ss, data));
 
+      case "voidInterview":
+        return jsonResponse(voidInterviewEntry(ss, data));
+
       case "getInterviews":
         return jsonResponse(getInterviewsHistory(ss, data.days));
 
@@ -2323,9 +2326,19 @@ function getInterviewsHistory(ss, days) {
 
   var values = sheet.getDataRange().getValues();
   var interviews = [];
+  var cutoffDate = null;
+
+  // days=0 or not provided = all-time; otherwise filter by days
+  if (days && Number(days) > 0) {
+    var cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - Number(days));
+    cutoffDate = Utilities.formatDate(cutoff, CONFIG.TIMEZONE, "yyyy-MM-dd");
+  }
 
   for (var i = 1; i < values.length; i++) {
     var row = values[i];
+    var rowDate = String(row[0]).substring(0, 10);
+    if (cutoffDate && rowDate < cutoffDate) continue;
     interviews.push({
       loggedDate: String(row[0]),
       name: String(row[1]),
@@ -2335,11 +2348,59 @@ function getInterviewsHistory(ss, days) {
       interviewDate: String(row[5]),
       roleDetails: String(row[6]),
       discordLink: String(row[7]),
-      timestamp: String(row[8])
+      timestamp: String(row[8]),
+      status: String(row[9] || "")  // VOIDED or empty
     });
   }
 
   return { interviews: interviews };
+}
+
+/**
+ * Marks an interview entry as VOIDED in the Interview_Log sheet.
+ * Matches by discordLink (col 8, index 7) or by discordId+loggedDate.
+ */
+function voidInterviewEntry(ss, data) {
+  var sheet = ss.getSheetByName("Interview_Log");
+  if (!sheet || sheet.getLastRow() <= 1) return { status: "NOT_FOUND", voided: 0 };
+
+  var values = sheet.getDataRange().getValues();
+  var voided = 0;
+  var now = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+
+  // Ensure sheet has a status column (col 10, index 9)
+  var totalCols = values[0].length;
+  var hasStatusCol = totalCols >= 10;
+  if (!hasStatusCol) {
+    // Extend header row with Status column
+    sheet.getRange(1, 10).setValue("Status");
+  }
+
+  for (var i = 1; i < values.length; i++) {
+    var row = values[i];
+    var rowDiscordLink = String(row[7] || "").trim();
+    var rowDiscordId = String(row[2] || "").trim();
+    var alreadyVoided = String(row[9] || "").toUpperCase() === "VOIDED";
+
+    if (alreadyVoided) continue;
+
+    var matched = false;
+    if (data.discordLink && rowDiscordLink && rowDiscordLink === data.discordLink) {
+      matched = true;
+    } else if (data.discordId && rowDiscordId === String(data.discordId) && data.loggedDate && String(row[0]).substring(0, 10) === data.loggedDate) {
+      matched = true;
+    }
+
+    if (matched) {
+      // Mark as VOIDED: update company to "[VOIDED]" and set status column
+      sheet.getRange(i + 1, 4).setValue("[VOIDED] " + String(row[3]));
+      sheet.getRange(i + 1, 10).setValue("VOIDED");
+      sheet.getRange(i + 1, 9).setValue(now + " | Voided by audit: " + (data.reason || "Invalid format"));
+      voided++;
+    }
+  }
+
+  return { status: voided > 0 ? "SUCCESS" : "NOT_FOUND", voided: voided };
 }
 
 /**

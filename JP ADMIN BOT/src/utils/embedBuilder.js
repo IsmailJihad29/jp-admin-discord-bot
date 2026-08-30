@@ -56,7 +56,7 @@ class Embeds {
       .addFields(
         { name: "Scoring Rules", value: "• 0–10 points based on accuracy\n• +2 bonus for 1st correct answer\n• 30% penalty if AI cheat detected", inline: true }
       )
-      .setFooter({ text: `JP ADMIN ${constants.BOT_VERSION} · Auto-scored by Groq AI` });
+      .setFooter({ text: `JP ADMIN ${constants.BOT_VERSION} · Auto-scored by Gemini AI` });
   }
 
   static leaderboard(title, entries, footerNote) {
