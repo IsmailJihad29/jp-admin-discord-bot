@@ -10,6 +10,35 @@ const cohortManager = require('../../config/cohortManager');
 const constants = require('../../config/constants');
 const DateTimeUtil = require('../../utils/dateTime');
 
+async function sendEmbedsSafely(targetChannel, embeds, initialContent = null, loadingMsgToEdit = null) {
+  const MAX_EMBEDS_PER_MSG = 2;
+  const batches = [];
+
+  for (let i = 0; i < embeds.length; i += MAX_EMBEDS_PER_MSG) {
+    batches.push(embeds.slice(i, i + MAX_EMBEDS_PER_MSG));
+  }
+
+  for (let b = 0; b < batches.length; b++) {
+    const batchEmbeds = batches[b];
+    const isFirst = b === 0;
+    const content = isFirst ? initialContent : null;
+
+    if (isFirst && loadingMsgToEdit) {
+      await loadingMsgToEdit.edit({
+        content: content,
+        embeds: batchEmbeds
+      });
+    } else {
+      await targetChannel.send({
+        content: content,
+        embeds: batchEmbeds
+      }).catch(err => {
+        console.error("Leaderboard send error:", err.message);
+      });
+    }
+  }
+}
+
 module.exports = {
   name: 'leaderboard',
   aliases: ['rtbr', 'weeklyreport', 'topstudents', 'fullleaderboard', 'ranks', 'publishleaderboard', 'postleaderboard', 'leaderboardpublish'],
@@ -69,11 +98,9 @@ module.exports = {
       }
 
       if (isPublishAction && destChannel && destChannel.id !== message.channel.id) {
-        // Broadcast all embeds with @everyone mention to target channel
-        await destChannel.send({
-          content: `${mentionTag} 📢 **COHORT PERFORMANCE & RIGHT-TO-BE-REFERRED (RTBR) LEADERBOARD IS LIVE!** 🏆\n*Real-time student points & ranking calculated across all active activities:*`,
-          embeds: embeds
-        }).catch(() => {});
+        // Broadcast embeds safely with @everyone mention to target channel
+        const broadcastHeader = `${mentionTag} 📢 **COHORT PERFORMANCE & RIGHT-TO-BE-REFERRED (RTBR) LEADERBOARD IS LIVE!** 🏆\n*Real-time student points & ranking calculated across all active activities:*`;
+        await sendEmbedsSafely(destChannel, embeds, broadcastHeader, null);
 
         const topStudent = standings[0];
         const receiptEmbed = Embeds.success(
@@ -86,10 +113,7 @@ module.exports = {
         );
         await loading.edit({ content: null, embeds: [receiptEmbed] });
       } else {
-        await loading.edit({
-          content: `${mentionTag} 📢 **Real-Time Student Performance Leaderboard:**`,
-          embeds: embeds
-        });
+        await sendEmbedsSafely(message.channel, embeds, `${mentionTag} 📢 **Real-Time Student Performance Leaderboard:**`, loading);
       }
     } catch (err) {
       await loading.edit({ content: null, embeds: [Embeds.error("Leaderboard Error", err.message)] });

@@ -456,10 +456,16 @@ class Scheduler {
         const studentRole = guild.roles.cache.find(r => r.name.toLowerCase() === (constants.ROLES.ACTIVE_STUDENT || 'active student').toLowerCase());
         const mentionTag = studentRole ? `@everyone <@&${studentRole.id}>` : `@everyone`;
 
-        await channel.send({
-          content: `${mentionTag} 📢 **WEEKLY COHORT PERFORMANCE & REFERRAL LEADERBOARD IS LIVE!** 🏆`,
-          embeds: embeds
-        }).catch(() => {});
+        // Send embeds in safe batches of 2 embeds per message
+        const MAX_EMBEDS_PER_MSG = 2;
+        for (let i = 0; i < embeds.length; i += MAX_EMBEDS_PER_MSG) {
+          const batch = embeds.slice(i, i + MAX_EMBEDS_PER_MSG);
+          const isFirst = i === 0;
+          await channel.send({
+            content: isFirst ? `${mentionTag} 📢 **WEEKLY COHORT PERFORMANCE & REFERRAL LEADERBOARD IS LIVE!** 🏆` : null,
+            embeds: batch
+          }).catch(err => Logger.error("Failed to send scheduled leaderboard batch:", err.message));
+        }
 
         if (adminChannel) {
           const topStudent = rtbr[0];

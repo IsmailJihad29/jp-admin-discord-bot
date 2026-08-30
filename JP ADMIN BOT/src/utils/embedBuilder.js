@@ -92,16 +92,20 @@ class Embeds {
     const top10 = entries.slice(0, 10);
     const rest = entries.slice(10);
 
-    // Embed 1: Top 10 High Performers
+    // Embed 1: Top 10 High Performers (Full details)
     let topDesc = `📊 **Top 10 High Performers · Right-To-Be-Referred (RTBR)**\n\n`;
     topDesc += top10.map((e, idx) => {
       const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `**#${idx + 1}**`;
-      const nameStr = e.name ? `(${e.name})` : '';
-      return `${medal} <@${e.discordId}> ${nameStr} — **${e.totalPoints} pts**\n   ${e.details || ''}`;
+      const nameStr = e.name ? `(**${e.name}**)` : '';
+      return `${medal} <@${e.discordId}> ${nameStr} ➔ **${e.totalPoints} PTS**\n   ↳ ${e.details || ''}`;
     }).join('\n\n');
 
     topDesc += `\n\n──────────────────────────────\n` +
       `💡 *Score Formula: Attendance (+1/-1) + Jobs Tiered Score + Streak (+3/day) + Interviews (+2) + Tasks (+1/+1)*`;
+
+    if (topDesc.length > 3800) {
+      topDesc = topDesc.substring(0, 3750) + "\n...*(truncated)*";
+    }
 
     const topEmbed = new EmbedBuilder()
       .setColor(0xF59E0B) // Amber Gold
@@ -115,8 +119,8 @@ class Embeds {
 
     embeds.push(topEmbed);
 
-    // Embed 2 (and chunks if needed): All Remaining Students in the SAME Style
-    const chunkSize = 15;
+    // Embeds for Remaining Students in clean compact chunks (20 students per embed)
+    const chunkSize = 20;
     for (let i = 0; i < rest.length; i += chunkSize) {
       const chunk = rest.slice(i, i + chunkSize);
       const startRank = 11 + i;
@@ -126,8 +130,12 @@ class Embeds {
       restDesc += chunk.map((e, cIdx) => {
         const rankNum = startRank + cIdx;
         const nameStr = e.name ? `(${e.name})` : '';
-        return `**#${rankNum}** <@${e.discordId}> ${nameStr} — **${e.totalPoints} pts**\n   ${e.details || ''}`;
-      }).join('\n\n');
+        return `**#${rankNum}** <@${e.discordId}> ${nameStr} — **${e.totalPoints} pts** ${e.details ? `\n   ↳ *${e.details}*` : ''}`;
+      }).join('\n');
+
+      if (restDesc.length > 3800) {
+        restDesc = restDesc.substring(0, 3750) + "\n...*(truncated)*";
+      }
 
       const restEmbed = new EmbedBuilder()
         .setColor(0x3B82F6) // Sapphire Blue
