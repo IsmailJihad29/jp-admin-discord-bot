@@ -40,6 +40,15 @@ class MessageHandler {
       return;
     }
 
+    // 3.5 Handle #daily-tasks Posts (Mentor Daily Target & Task Announcement)
+    if (ChannelHelper.isChannel(message, 'DAILY_TASK')) {
+      const cohortManager = require('../config/cohortManager');
+      if (cohortManager.isMentor(message.guild.id, message.member)) {
+        await this.handleMentorDailyTaskAnnouncement(message);
+        return;
+      }
+    }
+
     // 4. Handle #job-tracking Sheet Link Shares
     if (ChannelHelper.isChannel(message, 'JOB_TRACKING')) {
       await this.handleJobSheetPost(message);
@@ -158,6 +167,57 @@ class MessageHandler {
       message.reply({ embeds: [embed] }).catch(() => {});
     } catch (e) {
       Logger.error("Error handling job task announcement post:", e.message);
+    }
+  }
+
+  /**
+   * Handles Mentor daily job task / target announcement posts in #daily-tasks
+   */
+  static async handleMentorDailyTaskAnnouncement(message) {
+    try {
+      const cohortManager = require('../config/cohortManager');
+      const text = message.content.trim();
+      const todayStr = DateTimeUtil.getTodayDateStr();
+
+      // Extract target count from text (e.g. "10", "12", "15" or "Target: 12")
+      let targetCount = null;
+      const targetMatch = text.match(/(?:target|apply|applications?|apps?)[:\s]+(\d{1,3})/i) ||
+                          text.match(/(\d{1,3})\s*(?:ta|ti|টি|টা)?\s*(?:apply|applications?|apps?|jobs?)/i) ||
+                          text.match(/\b(\d{1,2})\b/);
+
+      if (targetMatch) {
+        targetCount = parseInt(targetMatch[1], 10);
+      }
+
+      // Extract date if mentioned (e.g. YYYY-MM-DD)
+      const dateMatch = text.match(/(\d{4}-\d{2}-\d{2})/);
+      const targetDate = dateMatch ? dateMatch[1] : todayStr;
+
+      if (targetCount && targetCount > 0) {
+        // Save in cohort manager
+        cohortManager.setDailyJobTarget(message.guild.id, targetDate, targetCount, text);
+
+        message.react('🎯').catch(() => {});
+
+        const tier70Min = Math.ceil(targetCount * 0.7);
+        const tier70Max = targetCount - 1;
+
+        const confirmEmbed = Embeds.info(
+          `🎯 DAILY JOB TARGET & CRITERIA REGISTERED · ${targetDate}`,
+          `✅ **Official daily application target set to \`${targetCount} Applications\` for \`${targetDate}\`.**\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `⚖️ **Scoring & Marking Criteria for Tonight:**\n` +
+          `• 🟢 **১০০% টার্গেট (${targetCount}+ টি আবেদন):** \`+1.0 Point\`\n` +
+          `• 🟡 **৭০%–৯৯% (${tier70Min}–${tier70Max}টি আবেদন):** \`+0.5 Point\`\n` +
+          `• 🔴 **< ৭০% (< ${tier70Min}টি আবেদন):** \`-0.5 Point\` *(পেনাল্টি)*\n` +
+          `• ⏰ **নাইটলি স্ক্র্যাপার ডেডলাইন:** **রাত ১২:০০ টা (মধ্যরাত)**\n\n` +
+          `👉 *আজ রাত ১২:০৫ এ স্বয়ংক্রিয় স্ক্র্যাপার স্টুডেন্টদের শিট এই টার্গেটের (${targetCount}টি আবেদন) ভিত্তিতে যাচাই করবে।*`
+        );
+
+        await message.reply({ embeds: [confirmEmbed] }).catch(() => {});
+      }
+    } catch (e) {
+      Logger.error("Error handling mentor daily task post:", e.message);
     }
   }
 

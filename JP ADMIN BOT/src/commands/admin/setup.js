@@ -65,6 +65,14 @@ const REQUIRED_CHANNEL_DEFINITIONS = [
     isPrivate: false
   },
   {
+    key: 'DAILY_TASK',
+    name: '🎯 | daily-tasks',
+    displayName: '🎯 | daily-tasks',
+    categoryName: 'STUDENTS ZONE',
+    topic: 'Daily Job Application Targets, Tasks & Focus Instructions from Mentors',
+    isPrivate: false
+  },
+  {
     key: 'INTERVIEW_UPDATE',
     name: '🎙️ | interview-preparations',
     displayName: '🎙️ | interview-preparations',

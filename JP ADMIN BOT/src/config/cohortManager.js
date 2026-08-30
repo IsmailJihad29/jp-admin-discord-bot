@@ -317,6 +317,38 @@ class CohortManager {
     this.saveToDisk();
   }
 
+  // --- Daily Job Task & Target Management ---
+  setDailyJobTarget(guildId, date, targetCount, instructions = '') {
+    const cohort = this.getCohort(guildId);
+    if (!cohort.dailyTargets) {
+      cohort.dailyTargets = {};
+    }
+    const numTarget = Math.max(1, Number(targetCount) || constants.SCORING.DEFAULT_JOB_TARGET);
+    cohort.dailyTargets[date] = {
+      target: numTarget,
+      instructions: instructions || '',
+      setAt: new Date().toISOString()
+    };
+    this.saveToDisk();
+    return cohort.dailyTargets[date];
+  }
+
+  getDailyJobTarget(guildId, date) {
+    const cohort = this.getCohort(guildId);
+    if (cohort.dailyTargets && cohort.dailyTargets[date]) {
+      return Number(cohort.dailyTargets[date].target) || cohort.targets?.applications || constants.SCORING.DEFAULT_JOB_TARGET;
+    }
+    return cohort.targets?.applications || constants.SCORING.DEFAULT_JOB_TARGET;
+  }
+
+  getDailyJobTaskDetails(guildId, date) {
+    const cohort = this.getCohort(guildId);
+    if (cohort.dailyTargets && cohort.dailyTargets[date]) {
+      return cohort.dailyTargets[date];
+    }
+    return null;
+  }
+
   getAllCohorts() {
     return Array.from(this.cohorts.values());
   }

@@ -199,7 +199,8 @@ class Scheduler {
         }
 
         const cohort = cohortManager.getCohort(guild.id);
-        const target = cohort?.targets?.applications || constants.SCORING.DEFAULT_JOB_TARGET;
+        const target = cohortManager.getDailyJobTarget(guild.id, todayDate);
+        const taskDetails = cohortManager.getDailyJobTaskDetails(guild.id, todayDate);
 
         // Fetch roster, linked sheets, and leaves once before the loop
         const [rosterRes, sheetRes, leavesRes] = await Promise.all([

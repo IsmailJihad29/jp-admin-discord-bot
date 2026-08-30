@@ -23,6 +23,7 @@ module.exports = {
     RESUME_REFERRAL: ["resume-needed", "resume-refer", "referrals", "resume"],
     ONE_ON_ONE: ["1on1-support", "1-on-1-support", "mentorship-support", "queries-to-mentor", "support"],
     HEALTH_CHECK: ["dev-health-check", "student-health-check", "my-health-check", "health-check", "healthcheck", "dev-health"],
+    DAILY_TASK: ["daily-task", "daily-tasks", "today-task", "todays-task", "daily-assignment", "daily-target", "daily-job-task"],
     SUCCESSFULLY_HIRED: ["successfully-hired", "hired", "placements", "success-stories"]
   },
 
