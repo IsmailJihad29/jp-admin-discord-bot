@@ -1,17 +1,11 @@
 /**
- * JP ADMIN — Referral Access & 70% Performance Lockout Service
+ * JP ADMIN — Referral Access & Negative Point / 3+ Absence Lockout Service
  *
  * Rules:
- * - Computes 7-day rolling performance percentage for each student:
- *   - Attendance Rate (Present + Approved Leaves / 5 days)
- *   - Job Application Rate (Weekly Applications / 50 Target)
- *   - Task Penalty deductions
- * - If Weekly Performance < 70%:
- *   - Assigns role 'Referral Restricted' on Discord
- *   - Locks access to Resume Referral & RTBR channels
- *   - DMs student with performance breakdown and unlock instructions
- * - If Weekly Performance >= 70%:
- *   - Automatically removes 'Referral Restricted' role and restores access
+ * - A student is restricted from #resume-needed ONLY IF:
+ *   1. They have negative total points (totalPoints < 0), OR
+ *   2. They have been absent for MORE THAN 3 days in the rolling 5-day week (absentDays > 3, i.e., 4 or 5 absences).
+ * - EVERYONE ELSE (including students with 0 points or positive points and <= 3 absences) is 100% UNLOCKED and can view #resume-needed.
  */
 
 const { PermissionFlagsBits } = require('discord.js');
@@ -24,18 +18,16 @@ const constants = require('../config/constants');
 
 class ReferralLockoutService {
   /**
-   * Calculates 7-day weekly performance percentage for all active students
+   * Evaluates all active students based on:
+   * - Total Score (restricted if < 0)
+   * - Weekly Absences (restricted if > 3 days)
    */
   static async evaluateCohortPerformance(guildId) {
-    const targetDaily = constants.SCORING.DEFAULT_JOB_TARGET;
-    const weeklyJobTarget = targetDaily * 5; // e.g. 50 applications
     const cohortManager = require('../config/cohortManager');
 
-    const [rosterRes, attendanceRes, jobsRes, tasksRes, scores] = await Promise.all([
+    const [rosterRes, attendanceRes, scores] = await Promise.all([
       GasClient.getRoster(guildId).catch(() => ({ students: [] })),
       GasClient.getAttendance(guildId).catch(() => ({ rows: [], dates: [] })),
-      GasClient.getJobsDaily(guildId, 7).catch(() => ({ jobs: [] })),
-      GasClient.getJobTasks(guildId).catch(() => ({ tasks: [] })),
       ScoringService.calculateRTBR(guildId).catch(() => [])
     ]);
 
@@ -45,25 +37,8 @@ class ReferralLockoutService {
     );
     const scoreMap = new Map(scores.map(s => [s.discordId, s]));
 
-    const recentDates = (attendanceRes.dates || []).slice(-5);
+    const recentDates = (attendanceRes.dates || []).slice(-5); // last 5 sessions (rolling week)
     const attendanceMap = new Map((attendanceRes.rows || []).map(r => [r.discordId, r]));
-
-    // Map weekly jobs
-    const jobsCountMap = new Map();
-    (jobsRes.jobs || []).forEach(j => {
-      const current = jobsCountMap.get(j.discordId) || 0;
-      jobsCountMap.set(j.discordId, current + (Number(j.count) || 0));
-    });
-
-    // Map overdue tasks
-    const overdueTasksMap = new Map();
-    (tasksRes.tasks || []).forEach(t => {
-      if (t.submissionStatus === 'Overdue' || (t.submissionStatus === 'Announced' && t.deadline && t.deadline < new Date().toISOString().substring(0, 10))) {
-        const list = overdueTasksMap.get(t.discordId) || [];
-        list.push(t);
-        overdueTasksMap.set(t.discordId, list);
-      }
-    });
 
     const evaluatedStudents = [];
 
@@ -71,47 +46,45 @@ class ReferralLockoutService {
       const discordId = student.discordId;
       const attRecord = attendanceMap.get(discordId);
       const studentScore = scoreMap.get(discordId) || { totalPoints: 0 };
+      const totalPoints = Number(studentScore.totalPoints) || 0;
 
-      // 1. Attendance Rate (5 sessions)
-      let attendedDays = 0; // P or approved L
+      // Calculate absences in the current rolling 5-day week
+      let attendedDays = 0;
       let absentDays = 0;
 
       if (attRecord && attRecord.sessions) {
         recentDates.forEach(d => {
           const mark = attRecord.sessions[d];
-          if (mark === 'P' || mark === 'L') attendedDays++;
+          if (mark === 'P' || mark === 'L' || mark === 'H') attendedDays++;
           else if (mark === 'A') absentDays++;
         });
       }
 
-      const attendanceRate = Math.min(100, Math.round((attendedDays / 5) * 100));
+      // ── STRICT LOCKOUT RULES ──
+      // 1. Negative points (< 0)
+      // 2. More than 3 days absent (> 3 days)
+      const hasNegativeScore = totalPoints < 0;
+      const hasExcessiveAbsences = absentDays > 3;
+      const isLocked = hasNegativeScore || hasExcessiveAbsences;
 
-      // 2. Job Application Rate (50 target)
-      const weeklyApps = jobsCountMap.get(discordId) || 0;
-      const jobRate = Math.min(100, Math.round((weeklyApps / weeklyJobTarget) * 100));
-
-      // 3. Task Deductions (-10% per overdue task)
-      const overdueCount = (overdueTasksMap.get(discordId) || []).length;
-      const taskDeduction = overdueCount * 10;
-
-      // 4. Overall Weighted Weekly Performance
-      // 40% Attendance + 60% Job Applications - Task deductions
-      let rawPerformance = Math.round((attendanceRate * 0.4) + (jobRate * 0.6)) - taskDeduction;
-      const overallPerformance = Math.max(0, Math.min(100, rawPerformance));
-
-      const isLocked = overallPerformance < 70;
+      let lockReason = "";
+      if (hasNegativeScore && hasExcessiveAbsences) {
+        lockReason = `Negative score (${totalPoints} pts) & ${absentDays} absences (> 3 days)`;
+      } else if (hasNegativeScore) {
+        lockReason = `Negative total score (${totalPoints} pts)`;
+      } else if (hasExcessiveAbsences) {
+        lockReason = `More than 3 days absent (${absentDays}/5 days absent)`;
+      }
 
       evaluatedStudents.push({
         discordId,
         name: student.name || student.username,
-        attendanceRate,
         attendedDays,
         absentDays,
-        jobRate,
-        weeklyApps,
-        overdueCount,
-        overallPerformance,
-        totalPoints: studentScore.totalPoints,
+        totalPoints,
+        hasNegativeScore,
+        hasExcessiveAbsences,
+        lockReason,
         isLocked
       });
     }
@@ -120,40 +93,56 @@ class ReferralLockoutService {
   }
 
   /**
-   * Ensures the 'Referral Restricted' role exists and configures channel overrides
+   * Ensures the 'Referral Restricted' role exists and configures channel overrides for #resume-needed
    */
   static async ensureRestrictionRoleAndPermissions(guild) {
-    let role = guild.roles.cache.find(r => r.name.toLowerCase() === constants.ROLES.REFERRAL_RESTRICTED.toLowerCase());
+    const studentRole = guild.roles.cache.find(r => r.name.toLowerCase() === (constants.ROLES.ACTIVE_STUDENT || 'active student').toLowerCase());
+    let restrictionRole = guild.roles.cache.find(r => r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
 
-    if (!role) {
-      role = await guild.roles.create({
+    if (!restrictionRole) {
+      restrictionRole = await guild.roles.create({
         name: constants.ROLES.REFERRAL_RESTRICTED,
         color: '#EF4444', // red
         mentionable: false,
-        reason: 'Auto-created role to restrict Resume Referral channel access for performance < 70%'
+        reason: 'Auto-created role to restrict #resume-needed access for negative points or >3 absences'
       }).catch(err => {
         Logger.error("Failed to create Referral Restricted role:", err.message);
         return null;
       });
     }
 
-    if (!role) return null;
+    if (!restrictionRole) return null;
 
-    // Apply ViewChannel: false override ONLY on RESUME_REFERRAL (#resume-needed) channel
+    // Ensure #resume-needed channel permission overwrites:
+    // 1. @everyone: ViewChannel: false
+    // 2. Active Student: ViewChannel: true, ReadMessageHistory: true, SendMessages: true
+    // 3. Referral Restricted: ViewChannel: false, ReadMessageHistory: false, SendMessages: false
     const resumeChannel = ChannelHelper.findChannel(guild, 'RESUME_REFERRAL');
     if (resumeChannel) {
-      await resumeChannel.permissionOverwrites.edit(role, {
+      if (guild.roles.everyone) {
+        await resumeChannel.permissionOverwrites.edit(guild.roles.everyone, {
+          ViewChannel: false
+        }).catch(() => {});
+      }
+      if (studentRole) {
+        await resumeChannel.permissionOverwrites.edit(studentRole, {
+          ViewChannel: true,
+          ReadMessageHistory: true,
+          SendMessages: true
+        }).catch(() => {});
+      }
+      await resumeChannel.permissionOverwrites.edit(restrictionRole, {
         ViewChannel: false,
         SendMessages: false,
         ReadMessageHistory: false
       }).catch(() => {});
     }
 
-    return role;
+    return restrictionRole;
   }
 
   /**
-   * Enforces role additions/removals based on 70% threshold and notifies students
+   * Enforces role additions/removals based on negative point and >3 absence rules
    */
   static async enforceCohortAccessLocks(guild) {
     const restrictionRole = await this.ensureRestrictionRoleAndPermissions(guild);
@@ -161,7 +150,7 @@ class ReferralLockoutService {
 
     const cohortManager = require('../config/cohortManager');
 
-    // Auto-clean: Remove restriction role from any Mentor or Supervisor who might have received it
+    // Auto-clean: Remove restriction role from any Mentor or Supervisor
     for (const member of guild.members.cache.values()) {
       if (cohortManager.isStaff(guild.id, member)) {
         if (member.roles.cache.has(restrictionRole.id)) {
@@ -198,32 +187,32 @@ class ReferralLockoutService {
 
             // Send DM alert to student
             const dmEmbed = Embeds.warning(
-              "🔒 Resume Needed Access Locked (< 70% Performance)",
-              `Hello **${s.name}**, your weekly bootcamp performance is currently at **${s.overallPerformance}%** (below the 70% threshold).\n\n` +
-              `📊 **Your Weekly Breakdown:**\n` +
-              `• 📅 **Attendance Rate:** ${s.attendanceRate}% (${s.attendedDays}/5 days present)\n` +
-              `• 💼 **Job Applications:** ${s.jobRate}% (${s.weeklyApps}/50 apps)\n` +
-              `• 🛠️ **Overdue Tasks:** ${s.overdueCount}\n\n` +
-              `🚫 **Access to <#resume-needed> has been temporarily restricted.**\n\n` +
-              `💡 **How to unlock your referral access:**\n` +
-              `1. Submit attendance regularly (+1 Present).\n` +
-              `2. Hit your daily target of 10 job applications.\n` +
-              `3. Raise your rolling weekly score back to 70%+ to unlock referral access automatically!`,
-              `JP ADMIN ${constants.BOT_VERSION} · Referral Lockout System`
+              "🔒 Resume Needed Access Restricted",
+              `Hello **${s.name}**, your access to the **#resume-needed** referral channel has been temporarily locked.\n\n` +
+              `🚫 **Reason:** ${s.lockReason}\n` +
+              `• ⭐ **Current Score:** **${s.totalPoints} pts**\n` +
+              `• 📅 **Weekly Absences:** **${s.absentDays}/5 days**\n\n` +
+              `💡 **How to restore access:**\n` +
+              `1. Ensure your total score is positive (>= 0 pts) by logging attendance, daily jobs, or tasks.\n` +
+              `2. Keep your weekly absences to 3 days or fewer.\n` +
+              `*Once your score is >= 0 and absences <= 3, access will be unlocked automatically!*`,
+              `JP ADMIN ${constants.BOT_VERSION} · Referral Access System`
             );
 
             await member.send({ embeds: [dmEmbed] }).catch(() => {});
           }
           lockedList.push(s);
         } else {
-          // Remove role if performance >= 70%
+          // Remove role if unlocked (e.g. score >= 0 and absentDays <= 3)
           if (hasRole) {
             await member.roles.remove(restrictionRole).catch(() => {});
 
             const unlockEmbed = Embeds.success(
-              "🔓 Resume Needed Access Restored (70%+ Performance)!",
-              `Congratulations **${s.name}**! Your performance is now at **${s.overallPerformance}%**.\n\n` +
-              `✅ Full access to the **#resume-needed** referral channel has been unlocked! Keep up the great work!`,
+              "🔓 Resume Needed Access Restored!",
+              `Congratulations **${s.name}**! Your account is now eligible for company referrals.\n\n` +
+              `• ⭐ **Current Score:** **${s.totalPoints} pts** (>= 0)\n` +
+              `• 📅 **Weekly Absences:** **${s.absentDays}/5 days** (<= 3)\n\n` +
+              `✅ Full access to the **#resume-needed** referral channel is now open for you!`,
               `JP ADMIN ${constants.BOT_VERSION} · Referral Access System`
             );
 
@@ -240,9 +229,30 @@ class ReferralLockoutService {
       totalEvaluated: evaluated.length,
       lockedCount: lockedList.length,
       unlockedCount: unlockedList.length,
-      lockedList,
-      unlockedList
+      lockedStudents: lockedList,
+      unlockedStudents: unlockedList
     };
+  }
+
+  /**
+   * Force removes 'Referral Restricted' role from all guild members (Instant full unlock)
+   */
+  static async unlockAll(guild) {
+    const restrictionRole = guild.roles.cache.find(r => r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
+    if (!restrictionRole) return { unlocked: 0 };
+
+    let count = 0;
+    for (const member of guild.members.cache.values()) {
+      if (member.roles.cache.has(restrictionRole.id)) {
+        await member.roles.remove(restrictionRole).catch(() => {});
+        count++;
+      }
+    }
+
+    // Ensure permissions on #resume-needed are open for Active Student
+    await this.ensureRestrictionRoleAndPermissions(guild);
+
+    return { unlocked: count };
   }
 }
 

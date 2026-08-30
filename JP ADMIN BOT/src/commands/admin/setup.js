@@ -251,7 +251,7 @@ module.exports = {
           if (studentRole) {
             overwrites.push({
               id: studentRole.id,
-              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks]
             });
           }
           if (mentorRole) {
