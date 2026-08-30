@@ -88,12 +88,23 @@ class ScoringService {
             const datePart = sessionDate.substring(0, 10);
             if (datePart < scoringStartDate) return;
 
+            const isMorningSession = sessionDate.toLowerCase().includes('morning');
+            if (isMorningSession && cohortManager.isMorningOff(guildId, datePart)) {
+              // Morning Basecamp is OFF for this day — 0 points for all students
+              return;
+            }
+
             const m = String(mark || "").toUpperCase().trim();
+            if (m === 'OFF' || m === '0' || m === 'EXCUSED' || m === 'L' || m === 'LEAVE') {
+              // 0 points
+              return;
+            }
+
             if (m === 'P' || m === 'PRESENT' || m.startsWith('P')) {
               student.attendancePoints += scoring.attendancePresent;
             } else if (m === 'A' || m === 'ABSENT' || m.startsWith('A')) {
               student.attendancePoints += scoring.attendanceAbsent;
-            } // Leave 'L' is 0 points
+            } // Leave / Off is 0 points
           });
         } else if (att.status === 'P' || att.status === 'PRESENT') {
           student.attendancePoints += scoring.attendancePresent;

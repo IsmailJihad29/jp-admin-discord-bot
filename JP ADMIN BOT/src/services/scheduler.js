@@ -114,6 +114,11 @@ class Scheduler {
 
     for (const guild of this.client.guilds.cache.values()) {
       try {
+        if (cohortManager.isOffday(guild.id, todayStr) || cohortManager.isMorningOff(guild.id, todayStr)) {
+          Logger.info(`[MorningAttendanceScan] Skipping guild ${guild.id}: Morning Basecamp is set to OFF today (${todayStr}).`);
+          continue;
+        }
+
         const res = await GasClient.scanMorningAttendance(guild.id, todayStr);
         if (res && res.status === 'SUCCESS') {
           const channel = this.getChannel(guild, 'ATTENDANCE') || this.getChannel(guild, 'BOT_ADMIN') || this.getChannel(guild, 'DISCUSSION');

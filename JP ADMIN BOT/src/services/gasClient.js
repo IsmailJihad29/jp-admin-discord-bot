@@ -186,8 +186,16 @@ class GasClient {
     return this.request(guildId, 'scanMorningAttendance', { date });
   }
 
+  static async setMorningOff(guildId, data) {
+    return this.request(guildId, 'setMorningOff', data);
+  }
+
   static async scanCustomAttendance(guildId, tabName, date, sessionLabel) {
     return this.request(guildId, 'scanCustomAttendance', { tabName, date, sessionLabel });
+  }
+
+  static async syncHistoricalAttendance(guildId, options = {}) {
+    return this.request(guildId, 'syncHistoricalAttendance', options);
   }
 
   static async getHolidays(guildId) {

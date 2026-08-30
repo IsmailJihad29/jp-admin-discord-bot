@@ -99,13 +99,22 @@ class CohortDataService {
       if (attRecord && attRecord.sessions) {
         Object.entries(attRecord.sessions).forEach(([sessionDate, mark]) => {
           const datePart = sessionDate.substring(0, 10);
-          sessionHistory[datePart] = String(mark || "").toUpperCase().trim();
+          const rawMark = String(mark || "").toUpperCase().trim();
+          sessionHistory[datePart] = rawMark;
           if (datePart >= scoringStartDate) {
+            const isMorningSession = sessionDate.toLowerCase().includes('morning');
+            const isMorningOff = isMorningSession && cohortManager.isMorningOff(guildId, datePart);
+
+            if (rawMark === 'OFF' || rawMark === '0' || rawMark === 'EXCUSED' || isMorningOff) {
+              // Excused / Off session - not counted as absence
+              leaveCount++;
+              return;
+            }
+
             totalSessions++;
-            const m = sessionHistory[datePart];
-            if (m === 'P' || m.startsWith('P')) presentCount++;
-            else if (m === 'A' || m.startsWith('A')) absentCount++;
-            else if (m === 'L' || m.startsWith('L')) leaveCount++;
+            if (rawMark === 'P' || rawMark.startsWith('P')) presentCount++;
+            else if (rawMark === 'A' || rawMark.startsWith('A')) absentCount++;
+            else if (rawMark === 'L' || rawMark.startsWith('L')) leaveCount++;
           }
         });
       }

@@ -43,6 +43,11 @@ module.exports = {
     }
 
     if (commandName === 'checkattendance' || commandName === 'scanattendance') {
+      if (args[0]?.toLowerCase() === 'all' || args[0]?.toLowerCase() === 'sync' || args[0]?.toLowerCase() === 'backfill') {
+        const syncCmd = require('./syncattendance');
+        return syncCmd.execute(message, ['daily', ...args.slice(1)], client);
+      }
+
       const targetDate = args[0] || DateTimeUtil.getTodayDateStr();
       const loading = await message.reply(`🔄 Scanning \`Daily Attendance\` Google Form tab for date \`${targetDate}\`...`);
 

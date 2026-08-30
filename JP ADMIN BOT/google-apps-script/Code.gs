@@ -123,8 +123,15 @@ function doPost(e) {
       case "scanMorningAttendance":
         return jsonResponse(scanMorningAttendanceFromForm(ss, data.date));
 
+      case "setMorningOff":
+        return jsonResponse(setMorningOffData(ss, data));
+
       case "scanCustomAttendance":
         return jsonResponse(scanCustomAttendanceFromForm(ss, data.tabName, data.date, data.sessionLabel));
+
+      case "syncHistoricalAttendance":
+      case "backfillAttendance":
+        return jsonResponse(syncHistoricalAttendanceFromForms(ss, data));
 
       case "getHolidays":
         return jsonResponse(getHolidaysData(ss));
@@ -1204,6 +1211,78 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
 }
 
 /**
+ * Sets Morning Basecamp to OFF (or ON) for a specified date in the Attendance sheet
+ * When OFF: marks all active students in the "YYYY-MM-DD (Morning)" column as "OFF" (0 pts).
+ */
+function setMorningOffData(ss, data) {
+  var targetDate = String(data.date || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd")).trim();
+  var isOff = data.isOff !== false; // default true
+  var reason = data.reason || "Morning Basecamp Off";
+  var colDate = targetDate + " (Morning)";
+
+  var botMapSheet = ss.getSheetByName("Bot_Map");
+  var attendanceSheet = ss.getSheetByName("Attendance");
+
+  if (!botMapSheet || !attendanceSheet) {
+    setupAllRequiredSheets(ss);
+    botMapSheet = ss.getSheetByName("Bot_Map");
+    attendanceSheet = ss.getSheetByName("Attendance");
+  }
+
+  // 1. Get active students from Bot_Map
+  var botMapValues = botMapSheet.getDataRange().getValues();
+  var students = [];
+  for (var i = 1; i < botMapValues.length; i++) {
+    var email = String(botMapValues[i][0] || "").toLowerCase().trim();
+    var name = String(botMapValues[i][1] || "").trim();
+    var dId = String(botMapValues[i][3] || "").trim();
+    var status = String(botMapValues[i][4] || "active").toLowerCase().trim();
+
+    if (dId && status === 'active') {
+      students.push({ email: email, name: name, discordId: dId });
+    }
+  }
+
+  if (isOff) {
+    var attendanceRecords = students.map(function(s) {
+      return {
+        discordId: s.discordId,
+        name: s.name,
+        email: s.email,
+        status: 'OFF',
+        points: 0
+      };
+    });
+
+    recordAttendanceSession(ss, { date: colDate, records: attendanceRecords });
+
+    return {
+      status: "SUCCESS",
+      session: "Morning",
+      date: targetDate,
+      colHeader: colDate,
+      isMorningOff: true,
+      reason: reason,
+      totalActive: students.length,
+      present: 0,
+      absent: 0,
+      leave: 0,
+      offCount: students.length,
+      records: attendanceRecords
+    };
+  } else {
+    return {
+      status: "SUCCESS",
+      session: "Morning",
+      date: targetDate,
+      colHeader: colDate,
+      isMorningOff: false,
+      message: "Morning Basecamp marked active for " + targetDate
+    };
+  }
+}
+
+/**
  * Custom Attendance Scanner from any specified sheet/tab
  */
 function scanCustomAttendanceFromForm(ss, customTabName, dateStr, customLabel) {
@@ -1359,6 +1438,199 @@ function scanCustomAttendanceFromForm(ss, customTabName, dateStr, customLabel) {
     absent: absentCount,
     leave: leaveCount,
     records: attendanceRecords
+  };
+}
+
+/**
+ * Bulk / Historical Attendance Sync from Google Form response tabs
+ * Scans all historical dates present in 'Daily Attendance' and/or 'Morning Attendance' tabs,
+ * calculates P (+1), A (-1), L (0), and records all sessions into the Attendance matrix.
+ */
+function syncHistoricalAttendanceFromForms(ss, options) {
+  options = options || {};
+  var syncType = options.type || "all"; // "all" | "daily" | "morning"
+  var startDate = options.startDate || null;
+  var endDate = options.endDate || null;
+
+  var botMapSheet = ss.getSheetByName("Bot_Map");
+  var attendanceSheet = ss.getSheetByName("Attendance");
+  var leaveSheet = ss.getSheetByName("Leave_Requests");
+
+  if (!botMapSheet || !attendanceSheet) {
+    setupAllRequiredSheets(ss);
+    botMapSheet = ss.getSheetByName("Bot_Map");
+    attendanceSheet = ss.getSheetByName("Attendance");
+  }
+
+  // 1. Get active students from Bot_Map
+  var botMapValues = botMapSheet.getDataRange().getValues();
+  var students = [];
+  for (var i = 1; i < botMapValues.length; i++) {
+    var email = String(botMapValues[i][0] || "").toLowerCase().trim();
+    var name = String(botMapValues[i][1] || "").trim();
+    var uName = String(botMapValues[i][2] || "").toLowerCase().trim().replace(/^@/, '').split('#')[0].trim();
+    var dId = String(botMapValues[i][3] || "").trim();
+    var status = String(botMapValues[i][4] || "active").toLowerCase().trim();
+    var phone = String(botMapValues[i][7] || "").replace(/[^0-9]/g, '');
+
+    if (dId && status === 'active') {
+      students.push({ email: email, name: name, username: uName, discordId: dId, phone: phone });
+    }
+  }
+
+  if (students.length === 0) {
+    return { status: "FAILED", error: "No active students found in Bot_Map." };
+  }
+
+  // 2. Approved leaves
+  var approvedLeaves = [];
+  if (leaveSheet && leaveSheet.getLastRow() > 1) {
+    var leaveValues = leaveSheet.getDataRange().getValues();
+    for (var l = 1; l < leaveValues.length; l++) {
+      var lDiscordId = String(leaveValues[l][2] || "").trim();
+      var lStart = parseDateToYMD(leaveValues[l][5]);
+      var lEnd = parseDateToYMD(leaveValues[l][6]);
+      var lStatus = String(leaveValues[l][8] || "").trim().toLowerCase();
+
+      if (lStatus === 'approved' && lDiscordId && lStart) {
+        approvedLeaves.push({ discordId: lDiscordId, start: lStart, end: lEnd || lStart });
+      }
+    }
+  }
+
+  function isStudentOnLeave(discordId, dateYmd) {
+    for (var k = 0; k < approvedLeaves.length; k++) {
+      if (approvedLeaves[k].discordId === discordId && dateYmd >= approvedLeaves[k].start && dateYmd <= approvedLeaves[k].end) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  var dailyDatesProcessed = [];
+  var morningDatesProcessed = [];
+  var totalSubmissionsCount = 0;
+
+  // 3. Process Daily Attendance tab
+  if (syncType === "all" || syncType === "daily") {
+    var dailySheet = findSheetByPattern(ss, ["Daily Attendance", "Daily_Attendance", "Attendance Responses", "Form Responses 1"], /(daily|attendance\s*response|form\s*response)/i);
+    if (dailySheet && dailySheet.getLastRow() > 1) {
+      var dailyValues = dailySheet.getDataRange().getValues();
+      var dailyByDate = {};
+      for (var f = 1; f < dailyValues.length; f++) {
+        var row = dailyValues[f];
+        var rowDate = parseDateToYMD(row[0]);
+        if (!rowDate) continue;
+        if (startDate && rowDate < startDate) continue;
+        if (endDate && rowDate > endDate) continue;
+
+        totalSubmissionsCount++;
+        if (!dailyByDate[rowDate]) {
+          dailyByDate[rowDate] = {};
+        }
+
+        for (var c = 0; c < row.length; c++) {
+          var cellVal = String(row[c] || "").trim();
+          if (cellVal) {
+            var cellLower = cellVal.toLowerCase().replace(/^@/, '').split('#')[0].trim();
+            dailyByDate[rowDate][cellLower] = true;
+            var numOnly = cellVal.replace(/[^0-9]/g, '');
+            if (numOnly.length >= 7) dailyByDate[rowDate][numOnly] = true;
+          }
+        }
+      }
+
+      var sortedDailyDates = Object.keys(dailyByDate).sort();
+      sortedDailyDates.forEach(function(dDate) {
+        var pMap = dailyByDate[dDate];
+        var records = students.map(function(s) {
+          var isP = (s.email && pMap[s.email]) ||
+                    (s.username && pMap[s.username]) ||
+                    (s.discordId && pMap[s.discordId]) ||
+                    (s.phone && pMap[s.phone]) ||
+                    (s.name && pMap[s.name.toLowerCase()]);
+          var status = 'A';
+          if (isP) status = 'P';
+          else if (isStudentOnLeave(s.discordId, dDate)) status = 'L';
+          return { discordId: s.discordId, email: s.email, name: s.name, status: status };
+        });
+
+        recordAttendanceSession(ss, { date: dDate, records: records });
+        dailyDatesProcessed.push(dDate);
+      });
+    }
+  }
+
+  // 4. Process Morning Attendance tab
+  if (syncType === "all" || syncType === "morning") {
+    var morningSheet = findSheetByPattern(ss, ["Morning Attendance", "Morning_Attendance"], /morning/i);
+    if (morningSheet && morningSheet.getLastRow() > 1) {
+      var morningValues = morningSheet.getDataRange().getValues();
+      var morningByDate = {};
+      for (var mf = 1; mf < morningValues.length; mf++) {
+        var mRow = morningValues[mf];
+        var mRowDate = parseDateToYMD(mRow[0]);
+        if (!mRowDate) continue;
+        if (startDate && mRowDate < startDate) continue;
+        if (endDate && mRowDate > endDate) continue;
+
+        totalSubmissionsCount++;
+        if (!morningByDate[mRowDate]) {
+          morningByDate[mRowDate] = {};
+        }
+
+        for (var mc = 0; mc < mRow.length; mc++) {
+          var mCellVal = String(mRow[mc] || "").trim();
+          if (mCellVal) {
+            var mCellLower = mCellVal.toLowerCase().replace(/^@/, '').split('#')[0].trim();
+            morningByDate[mRowDate][mCellLower] = true;
+            var mNumOnly = mCellVal.replace(/[^0-9]/g, '');
+            if (mNumOnly.length >= 7) morningByDate[mRowDate][mNumOnly] = true;
+          }
+        }
+      }
+
+      var sortedMorningDates = Object.keys(morningByDate).sort();
+      sortedMorningDates.forEach(function(mDate) {
+        var colHeader = mDate + " (Morning)";
+        var mpMap = morningByDate[mDate];
+        var records = students.map(function(s) {
+          var isP = (s.email && mpMap[s.email]) ||
+                    (s.username && mpMap[s.username]) ||
+                    (s.discordId && mpMap[s.discordId]) ||
+                    (s.phone && mpMap[s.phone]) ||
+                    (s.name && mpMap[s.name.toLowerCase()]);
+          var status = 'A';
+          if (isP) status = 'P';
+          else if (isStudentOnLeave(s.discordId, mDate)) status = 'L';
+          return { discordId: s.discordId, email: s.email, name: s.name, status: status };
+        });
+
+        recordAttendanceSession(ss, { date: colHeader, records: records });
+        morningDatesProcessed.push(mDate);
+      });
+    }
+  }
+
+  // Compute combined unique dates
+  var allDatesSet = {};
+  dailyDatesProcessed.forEach(function(d) { allDatesSet[d] = true; });
+  morningDatesProcessed.forEach(function(d) { allDatesSet[d] = true; });
+  var allDatesList = Object.keys(allDatesSet).sort();
+
+  return {
+    status: "SUCCESS",
+    syncType: syncType,
+    totalSessionsSynced: dailyDatesProcessed.length + morningDatesProcessed.length,
+    dailySessionsCount: dailyDatesProcessed.length,
+    morningSessionsCount: morningDatesProcessed.length,
+    dailyDates: dailyDatesProcessed,
+    morningDates: morningDatesProcessed,
+    allDatesList: allDatesList,
+    earliestDate: allDatesList[0] || null,
+    latestDate: allDatesList[allDatesList.length - 1] || null,
+    totalSubmissionsProcessed: totalSubmissionsCount,
+    totalActiveStudents: students.length
   };
 }
 

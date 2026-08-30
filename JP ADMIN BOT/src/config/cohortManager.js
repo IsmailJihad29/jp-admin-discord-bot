@@ -167,6 +167,46 @@ class CohortManager {
     });
   }
 
+  setMorningOff(guildId, data) {
+    const cohort = this.getCohort(guildId);
+    if (!cohort.morningOffDays) cohort.morningOffDays = [];
+    const dateStr = typeof data === 'string' ? data : data.date;
+    const reason = typeof data === 'object' && data.reason ? data.reason : "Morning Basecamp Off";
+    const setBy = typeof data === 'object' && data.setBy ? data.setBy : "Mentor";
+
+    // Remove existing if present
+    cohort.morningOffDays = cohort.morningOffDays.filter(m => (typeof m === 'string' ? m : m.date) !== dateStr);
+    
+    cohort.morningOffDays.push({
+      date: dateStr,
+      reason: reason,
+      setBy: setBy,
+      createdAt: new Date().toISOString()
+    });
+    this.saveToDisk();
+    return cohort.morningOffDays;
+  }
+
+  removeMorningOff(guildId, dateStr) {
+    const cohort = this.getCohort(guildId);
+    if (!cohort.morningOffDays) cohort.morningOffDays = [];
+    const initialLen = cohort.morningOffDays.length;
+    cohort.morningOffDays = cohort.morningOffDays.filter(m => (typeof m === 'string' ? m : m.date) !== dateStr);
+    this.saveToDisk();
+    return cohort.morningOffDays.length < initialLen;
+  }
+
+  isMorningOff(guildId, dateStr) {
+    if (this.isOffday(guildId, dateStr)) return true;
+    const list = this.getMorningOffDays(guildId);
+    return list.some(m => (typeof m === 'string' ? m : m.date) === dateStr);
+  }
+
+  getMorningOffDays(guildId) {
+    const cohort = this.getCohort(guildId);
+    return cohort?.morningOffDays || [];
+  }
+
   setTrackerTemplate(guildId, url) {
     const cohort = this.getCohort(guildId);
     cohort.trackerTemplateUrl = url;
