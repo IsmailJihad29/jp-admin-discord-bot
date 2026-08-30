@@ -139,18 +139,8 @@ class CatchupService {
               continue;
             }
 
-            // 5. Process Prefix Commands in any channel
-            if (content.startsWith('!')) {
-              // Ignore !catchup itself to avoid recursion
-              if (content.toLowerCase().startsWith('!catchup') || content.toLowerCase().startsWith('!scanpending')) {
-                continue;
-              }
-
-              Logger.info(`[CatchupService] Catching up pending command '${content}' from ${message.author.tag} in #${channel.name}`);
-              await commandHandler.handle(message, client);
-              stats.commandsProcessed++;
-              await this.sleep(800);
-            }
+            // Note: Prefix commands starting with '!' are on-demand user actions
+            // and should NOT be re-executed during backlog scan to prevent duplicate responses.
           } catch (err) {
             Logger.error(`[CatchupService] Error processing message ${message.id}:`, err.message);
             stats.errors.push(`Msg ${message.id}: ${err.message}`);
@@ -161,7 +151,7 @@ class CatchupService {
       }
     }
 
-    Logger.info(`[CatchupService] Backlog scan complete. Commands: ${stats.commandsProcessed}, Interviews: ${stats.interviewsProcessed}, Tasks: ${stats.jobTasksProcessed}, Sheets: ${stats.jobSheetsProcessed}`);
+    Logger.info(`[CatchupService] Backlog scan complete. Interviews: ${stats.interviewsProcessed}, Tasks: ${stats.jobTasksProcessed}, Sheets: ${stats.jobSheetsProcessed}`);
     return stats;
   }
 
