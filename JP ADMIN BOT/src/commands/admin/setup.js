@@ -241,17 +241,15 @@ module.exports = {
             });
           }
         } else if (chDef.key === 'RESUME_REFERRAL') {
-          // Referral Drive — Hidden from Referral Restricted students
+          // Referral Drive — Open to @everyone by default, locked only for negative points (<0) or 3 consecutive absences
+          overwrites.push({
+            id: guild.roles.everyone.id,
+            allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks]
+          });
           if (restrictionRole) {
             overwrites.push({
               id: restrictionRole.id,
               deny: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
-            });
-          }
-          if (studentRole) {
-            overwrites.push({
-              id: studentRole.id,
-              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks]
             });
           }
           if (mentorRole) {
