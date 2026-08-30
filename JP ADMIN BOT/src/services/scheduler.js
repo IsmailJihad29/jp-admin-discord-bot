@@ -55,8 +55,8 @@ class Scheduler {
     // 5. Job Task Deadline Overdue Monitor (-2 pts penalty) - 00:05 Daily
     cron.schedule('5 0 * * *', () => this.runJobTaskDeadlineAudit(), { timezone: 'Asia/Dhaka' });
 
-    // 6. Weekly Performance Leaderboard & Referral Access Sync - 18:00 Thursday
-    cron.schedule('0 18 * * 4', () => this.runWeeklyLeaderboard(), { timezone: 'Asia/Dhaka' });
+    // 6. Weekly Performance Leaderboard & Referral Access Sync - 23:30 Thursday (11:30 PM)
+    cron.schedule('30 23 * * 4', () => this.runWeeklyLeaderboard(), { timezone: 'Asia/Dhaka' });
 
     // 7. Drop-out Predictor & 1-on-1 Auto-Scheduler - 18:30 Thursday
     cron.schedule('30 18 * * 4', () => this.runWeeklyRiskAndOneOnOneSchedule(), { timezone: 'Asia/Dhaka' });
@@ -425,11 +425,11 @@ class Scheduler {
   }
 
   /**
-   * Weekly Performance Leaderboard (Thursday 6 PM)
+   * Weekly Performance Leaderboard (Thursday 11:30 PM / 23:30)
    * Publishes full student standings with @everyone mention to #referral-leaderboard
    */
   async runWeeklyLeaderboard() {
-    Logger.info("[WeeklyLeaderboard] Publishing Thursday 18:00 weekly leaderboard.");
+    Logger.info("[WeeklyLeaderboard] Publishing Thursday 23:30 weekly leaderboard.");
     const todayStr = DateTimeUtil.getTodayDateStr();
 
     for (const guild of this.client.guilds.cache.values()) {
@@ -440,6 +440,7 @@ class Scheduler {
       }
 
       const channel = this.getChannel(guild, 'RTBR') || this.getChannel(guild, 'DISCUSSION');
+      const adminChannel = this.getChannel(guild, 'BOT_ADMIN');
       if (!channel) continue;
 
       try {
@@ -447,9 +448,9 @@ class Scheduler {
         if (!rtbr || rtbr.length === 0) continue;
 
         const embeds = Embeds.fullWeeklyLeaderboardEmbeds(
-          "Weekly Student Performance Leaderboard (Thursday 6 PM)",
+          "Weekly Student Performance Leaderboard (Thursday 11:30 PM)",
           rtbr,
-          "Score Formula: Attendance (+1/-1) + Jobs/Target + Streak (+3/day) + Interviews (+5) + Tasks"
+          "Score Formula: Attendance (+1/-1) + Jobs/Target + Streak (+3/day) + Interviews (+2) + Tasks"
         );
 
         const studentRole = guild.roles.cache.find(r => r.name.toLowerCase() === (constants.ROLES.ACTIVE_STUDENT || 'active student').toLowerCase());
@@ -459,6 +460,18 @@ class Scheduler {
           content: `${mentionTag} 📢 **WEEKLY COHORT PERFORMANCE & REFERRAL LEADERBOARD IS LIVE!** 🏆`,
           embeds: embeds
         }).catch(() => {});
+
+        if (adminChannel) {
+          const topStudent = rtbr[0];
+          const receiptEmbed = Embeds.success(
+            "Weekly Performance Leaderboard Published! 🏆",
+            `✅ **Scheduled Thursday Leaderboard** published for all **${rtbr.length} active students**.\n\n` +
+            `• 🥇 **Top Rank:** ${topStudent ? `<@${topStudent.discordId}> (**${topStudent.totalPoints} pts**)` : 'N/A'}\n` +
+            `• 📢 **Published to Channel:** <#${channel.id}> with \`@everyone\` mention.\n` +
+            `• ⏰ **Trigger:** Scheduled Thursday 11:30 PM (23:30 Asia/Dhaka) Automation.`
+          );
+          await adminChannel.send({ embeds: [receiptEmbed] }).catch(() => {});
+        }
       } catch (err) {
         Logger.error("Failed weekly leaderboard:", err.message);
       }

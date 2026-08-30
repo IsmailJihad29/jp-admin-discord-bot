@@ -388,6 +388,27 @@ class InteractionHandler {
       }
       return;
     }
+
+    // 7. Point System Guide Interactive Navigation Tabs
+    if (customId.startsWith('points_tab_')) {
+      await interaction.deferUpdate().catch(() => {});
+      const tab = customId.replace('points_tab_', '');
+      const pointsCmd = require('../commands/students/points');
+
+      let embed;
+      if (tab === 'full') {
+        embed = pointsCmd.buildFullGuideEmbed(interaction.guild.id);
+      } else {
+        embed = pointsCmd.buildCategoryEmbed(interaction.guild.id, tab);
+      }
+
+      const components = pointsCmd.buildNavigationRows();
+      await interaction.message.edit({
+        embeds: [embed],
+        components: components
+      }).catch(() => {});
+      return;
+    }
   }
 
   static async handleModal(interaction, client) {

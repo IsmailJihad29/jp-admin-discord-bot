@@ -501,11 +501,19 @@ JP ADMIN হলো EJP Mentorship & Career Accelerator প্রোগ্রা�
 --------------------------------------------------------------------------------
 ৫.৬. শিক্ষার্থী স্বাস্থ্য, রিস্ক ও লিডারবোর্ড কমান্ড
 --------------------------------------------------------------------------------
-• কমান্ড: !leaderboard
-  - বিকল্প নাম: !rtbr, !weeklyreport, !ranks
-  - অনুমতি: Student / Staff
-  - চ্যানেল: #referral-leaderboard বা যেকোনো চ্যানেল
-  - বিবরণ: শিক্ষার্থীদের সার্বিক পয়েন্ট ও র‍্যাঙ্কিং এম্বেড সহ প্রদর্শন করে।
+• কমান্ড: !points [attendance / jobs / streaks / interviews / tasks]
+  - বিকল্প নাম: !pointsystem, !scoring, !scoresystem, !pointrules, !pointguide, !rtbrpoints
+  - অনুমতি: Everyone (Student / Mentor)
+  - চ্যানেল: যেকোনো চ্যানেল / #jp-admin
+  - উদাহরণ: !points (অথবা !points jobs, !points post #announcements)
+  - বিবরণ: সম্পূর্ণ কোহোর্টের অফিশিয়াল পয়েন্ট সিস্টেম (উপস্থিতি, জব টায়ার, স্ট্রিক বোনাস, ইন্টারভিউ রিওয়ার্ড, জব টাস্ক ও আরটিবিআর স্কোর) বিস্তারিত ব্যাখ্যা করে। মেন্টররা `!points post` দিয়ে পুরো নির্দেশিকা যেকোনো চ্যানেলে ব্রডকাস্ট করতে পারেন।
+
+• কমান্ড: !leaderboard [post [#channel]]
+  - বিকল্প নাম: !rtbr, !weeklyreport, !topstudents, !publishleaderboard, !ranks
+  - অনুমতি: Student / Staff / Mentor
+  - চ্যানেল: #referral-leaderboard বা যেকোনো চ্যানেল / #jp-admin
+  - উদাহরণ: !leaderboard (বা !leaderboard post #announcements, !publishleaderboard)
+  - বিবরণ: শিক্ষার্থীদের সার্বিক পয়েন্ট ও র‍্যাঙ্কিং এম্বেড সহ প্রদর্শন করে। প্রতি বৃহস্পতিবার রাত ১১:৩০ টায় (23:30) এটি স্বয়ংক্রিয়ভাবে পাবলিশ হয়, এছাড়াও মেন্টররা যেকোনো সময় `!leaderboard post` দিয়ে ইনস্ট্যান্ট লাইভ স্কোর পাবলিশ করতে পারেন।
 
 • কমান্ড: !inspect @student
   - বিকল্প নাম: !student, !deepcheck

@@ -101,7 +101,7 @@ class Embeds {
     }).join('\n\n');
 
     topDesc += `\n\n──────────────────────────────\n` +
-      `💡 *Score Formula: Attendance (+1/-1) + Jobs Tiered Score + Streak (+3/day) + Interviews (+5) + Tasks (+1/+1)*`;
+      `💡 *Score Formula: Attendance (+1/-1) + Jobs Tiered Score + Streak (+3/day) + Interviews (+2) + Tasks (+1/+1)*`;
 
     const topEmbed = new EmbedBuilder()
       .setColor(0xF59E0B) // Amber Gold
