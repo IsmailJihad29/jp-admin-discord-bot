@@ -151,6 +151,10 @@ function doPost(e) {
       case "getLeaves":
         return jsonResponse(getLeavesList(ss, data.status));
 
+      case "repairLeaveRequests":
+      case "syncLeaves":
+        return jsonResponse(repairLeaveRequestsMatrix(ss));
+
       case "recordJobSheet":
         return jsonResponse(recordJobSheetUrl(ss, data));
 
@@ -2040,6 +2044,114 @@ function getLeavesList(ss, statusFilter) {
   }
 
   return { leaves: leaves };
+}
+
+/**
+ * Repairs and migrates Leave_Requests sheet:
+ * 1. Ensures Phone column is present and properly formatted.
+ * 2. Iterates over all existing leave rows and syncs student Name, Email, and Phone from Bot_Map and All Data.
+ * 3. Normalizes date formatting and column alignments.
+ */
+function repairLeaveRequestsMatrix(ss) {
+  var sheet = ss.getSheetByName("Leave_Requests");
+  if (!sheet) {
+    setupAllRequiredSheets(ss);
+    sheet = ss.getSheetByName("Leave_Requests");
+  }
+  if (!sheet) return { error: "Leave_Requests sheet not found" };
+
+  ensureLeaveSheetHeader(sheet);
+
+  if (sheet.getLastRow() <= 1) {
+    return {
+      status: "SUCCESS",
+      message: "Leave_Requests sheet is empty. Header is verified.",
+      totalRows: 0,
+      syncedProfiles: 0
+    };
+  }
+
+  var rawValues = sheet.getDataRange().getValues();
+  var headers = rawValues[0].map(function(h) { return String(h || "").toLowerCase().trim(); });
+
+  var reqIdCol = -1, tsCol = -1, dIdCol = -1, nameCol = -1, emailCol = -1, phoneCol = -1, startCol = -1, endCol = -1, reasonCol = -1, statusCol = -1, noteCol = -1;
+  for (var c = 0; c < headers.length; c++) {
+    var h = headers[c];
+    if (h.indexOf("request") !== -1 && h.indexOf("id") !== -1) reqIdCol = c;
+    else if (h.indexOf("timestamp") !== -1 || h.indexOf("date") === 0) tsCol = c;
+    else if (h.indexOf("discord") !== -1) dIdCol = c;
+    else if (h === "name" || h.indexOf("full name") !== -1 || h.indexOf("student") !== -1) nameCol = c;
+    else if (h.indexOf("email") !== -1) emailCol = c;
+    else if (h.indexOf("phone") !== -1 || h.indexOf("mobile") !== -1) phoneCol = c;
+    else if (h.indexOf("start") !== -1) startCol = c;
+    else if (h.indexOf("end") !== -1) endCol = c;
+    else if (h.indexOf("reason") !== -1) reasonCol = c;
+    else if (h.indexOf("status") !== -1) statusCol = c;
+    else if (h.indexOf("note") !== -1) noteCol = c;
+  }
+
+  var standardHeaders = SCHEMA_DEFS["Leave_Requests"];
+  var cleanRows = [];
+  var syncedCount = 0;
+
+  for (var r = 1; r < rawValues.length; r++) {
+    var row = rawValues[r];
+    var reqId = String(reqIdCol !== -1 ? row[reqIdCol] : row[0] || "").trim();
+    if (!reqId) {
+      reqId = "LR-" + Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyyMMdd") + "-" + Utilities.getUuid().substring(0, 4).toUpperCase();
+    }
+    var timestamp = String(tsCol !== -1 ? row[tsCol] : row[1] || "").trim();
+    var discordId = String(dIdCol !== -1 ? row[dIdCol] : row[2] || "").trim();
+    var curName = String(nameCol !== -1 ? row[nameCol] : row[3] || "").trim();
+    var curEmail = String(emailCol !== -1 ? row[emailCol] : row[4] || "").trim();
+    var curPhone = String(phoneCol !== -1 ? row[phoneCol] : (row.length > 5 ? row[5] : "") || "").trim();
+    var startDate = parseDateToYMD(startCol !== -1 ? row[startCol] : row[5]) || String(row[5] || "");
+    var endDate = parseDateToYMD(endCol !== -1 ? row[endCol] : row[6]) || startDate;
+    var reason = String(reasonCol !== -1 ? row[reasonCol] : row[7] || "").trim();
+    var status = String(statusCol !== -1 ? row[statusCol] : row[8] || "Pending").trim();
+    var note = String(noteCol !== -1 ? row[noteCol] : row[9] || "").trim();
+
+    // Auto-sync profile from Bot_Map & All Data
+    var profile = findStudentProfile(ss, { discordId: discordId, email: curEmail, name: curName, phone: curPhone });
+    if (profile.name || profile.email || profile.phone) {
+      syncedCount++;
+    }
+
+    var finalName = profile.name || curName || "Unknown Student";
+    var finalEmail = profile.email || curEmail || "";
+    var finalPhone = profile.phone || curPhone || "";
+
+    cleanRows.push([
+      reqId,
+      timestamp,
+      discordId,
+      finalName,
+      finalEmail,
+      finalPhone,
+      startDate,
+      endDate,
+      reason,
+      status,
+      note
+    ]);
+  }
+
+  // Clear sheet and rewrite canonical 11-column matrix
+  sheet.clear();
+  sheet.getRange(1, 1, 1, standardHeaders.length).setValues([standardHeaders]).setFontWeight("bold").setBackground("#e2e8f0");
+  sheet.setFrozenRows(1);
+
+  if (cleanRows.length > 0) {
+    sheet.getRange(2, 1, cleanRows.length, standardHeaders.length).setValues(cleanRows);
+  }
+
+  return {
+    status: "SUCCESS",
+    message: "Leave_Requests sheet successfully migrated to standard 11-column format with synced student profiles.",
+    totalRows: cleanRows.length,
+    syncedProfiles: syncedCount,
+    columns: standardHeaders
+  };
 }
 
 /**

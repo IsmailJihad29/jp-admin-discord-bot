@@ -422,12 +422,12 @@ JP ADMIN হলো EJP Mentorship & Career Accelerator প্রোগ্রা�
 --------------------------------------------------------------------------------
 ৫.৪. ছুটি ও অফডে (Holidays) ম্যানেজমেন্ট কমান্ড
 --------------------------------------------------------------------------------
-• কমান্ড: !leaves [pending / approved / rejected / all]
-  - বিকল্প নাম: !allleaves
+• কমান্ড: !leaves [pending / approved / rejected / all / sync]
+  - বিকল্প নাম: !allleaves, !repairleaves, !leavesync, !syncleaves
   - অনুমতি: Mentor / Supervisor
   - চ্যানেল: #jp-admin
-  - উদাহরণ: !leaves pending
-  - বিবরণ: শিক্ষার্থীদের জমা দেওয়া সকল ছুটির আবেদন [Approve] ও [Reject] বাটন সহ প্রদর্শন করে।
+  - উদাহরণ: !leaves pending (বা !leaves sync, !repairleaves)
+  - বিবরণ: শিক্ষার্থীদের জমা দেওয়া সকল ছুটির আবেদন [Approve] ও [Reject] বাটন সহ প্রদর্শন করে। `!leaves sync` দিলে পূর্বের সব পুরনো লিভ ডেটা নতুন ১১-কলাম ফরম্যাটে মাইগ্রেট করে এবং All Data ও Bot_Map থেকে নাম, ইমেইল ও মোবাইল নম্বর ব্যাকফিল/সিঙ্ক করে।
 
 • কমান্ড: !approve <Request_ID>
   - বিকল্প নাম: !acceptleave

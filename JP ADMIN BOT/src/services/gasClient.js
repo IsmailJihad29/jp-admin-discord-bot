@@ -110,6 +110,10 @@ class GasClient {
     return this.request(guildId, 'getLeaves', { status: statusFilter });
   }
 
+  static async repairLeaves(guildId) {
+    return this.request(guildId, 'repairLeaveRequests', {});
+  }
+
   static async submitAppeal(guildId, appealData) {
     return this.request(guildId, 'submitAppeal', appealData);
   }

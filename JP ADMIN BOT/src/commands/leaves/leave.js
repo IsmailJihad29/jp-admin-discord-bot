@@ -12,9 +12,9 @@ const DateTimeUtil = require('../../utils/dateTime');
 
 module.exports = {
   name: 'leave',
-  aliases: ['leaves', 'myleave', 'leaverequest', 'leavelist'],
-  description: 'Submit a student leave request or review pending leaves as a mentor',
-  usage: '!leave (students) | !leaves [pending|approved|rejected|all] (mentors)',
+  aliases: ['leaves', 'myleave', 'leaverequest', 'leavelist', 'repairleaves', 'leavesync', 'syncleaves'],
+  description: 'Submit a student leave request, review pending leaves, or sync historical leave data into the 11-column matrix',
+  usage: '!leave (students) | !leaves [pending|approved|rejected|all|sync] (mentors)',
   supervisorOnly: false, // Students can run !leave
 
   async execute(message, args, client) {
@@ -173,10 +173,36 @@ module.exports = {
         });
       }
 
-      const filterArg = (args[0] || 'pending').toLowerCase();
-      const statusFilter = filterArg === 'all' ? null : (filterArg === 'approved' ? 'APPROVED' : (filterArg === 'rejected' ? 'REJECTED' : 'PENDING'));
+    const filterArg = (args[0] || '').toLowerCase();
 
-      const loading = await message.reply(`📋 **Fetching ${statusFilter || 'ALL'} leave requests from Google Sheets database...**`);
+    // Check if mentor requested a repair / historical sync of Leave_Requests
+    if (filterArg === 'sync' || filterArg === 'repair' || filterArg === 'migrate' || commandName === 'repairleaves' || commandName === 'leavesync' || commandName === 'syncleaves') {
+      const loading = await message.reply("🔄 **Migrating & Syncing Leave_Requests matrix from All Data & Bot_Map...**");
+      try {
+        const res = await GasClient.repairLeaves(guildId);
+        return loading.edit({
+          content: null,
+          embeds: [Embeds.success(
+            "Leave Requests Matrix Synced & Migrated ✅",
+            `• **Status:** ${res.message || 'Successfully migrated!'}\n` +
+            `• 📋 **Total Leave Rows Processed:** \`${res.totalRows || 0}\`\n` +
+            `• 👥 **Student Profiles Synced (Name/Email/Phone):** \`${res.syncedProfiles || 0}\`\n` +
+            `• 📊 **Columns Aligned:** \`11 Columns (with Phone)\`\n\n` +
+            `💡 *All past leave records in the Google Sheet are now updated with official Name, Email, and Phone numbers!*`
+          )]
+        });
+      } catch (err) {
+        return loading.edit({
+          content: null,
+          embeds: [Embeds.error("Leave Sync Failed", err.message)]
+        });
+      }
+    }
+
+    const currentFilter = (filterArg || 'pending').toLowerCase();
+    const statusFilter = currentFilter === 'all' ? null : (currentFilter === 'approved' ? 'APPROVED' : (currentFilter === 'rejected' ? 'REJECTED' : 'PENDING'));
+
+    const loading = await message.reply(`📋 **Fetching ${statusFilter || 'ALL'} leave requests from Google Sheets database...**`);
 
       try {
         const leaveData = await GasClient.getLeaves(guildId, statusFilter);
