@@ -6,6 +6,7 @@ const GasClient = require('../../services/gasClient');
 const Embeds = require('../../utils/embedBuilder');
 const constants = require('../../config/constants');
 const DateTimeUtil = require('../../utils/dateTime');
+const ChannelHelper = require('../../utils/channelHelper');
 
 module.exports = {
   name: 'outreachcheck',
@@ -21,7 +22,7 @@ module.exports = {
     if (commandName === 'backfilloutreach') {
       const loading = await message.reply("🔄 Backfilling immutable message history from `#outreach-update`...");
       try {
-        const channel = guild.channels.cache.find(c => constants.CHANNELS.OUTREACH_UPDATE.includes(c.name.toLowerCase()));
+        const channel = guild.channels.cache.find(c => c.name.toLowerCase().includes('outreach'));
         if (!channel) return loading.edit("❌ Outreach channel not found.");
 
         const messages = await channel.messages.fetch({ limit: 100 });
@@ -51,9 +52,9 @@ module.exports = {
     }
 
     if (commandName === 'backfillinterviews') {
-      const loading = await message.reply("🔄 Backfilling interview messages from `#interview-update`...");
+      const loading = await message.reply("🔄 Backfilling interview messages from `#interview-preparations`...");
       try {
-        const channel = guild.channels.cache.find(c => c.name.toLowerCase() === constants.CHANNELS.INTERVIEW_UPDATE);
+        const channel = ChannelHelper.findChannel(guild, 'INTERVIEW_UPDATE');
         if (!channel) return loading.edit("❌ Interview update channel not found.");
 
         const messages = await channel.messages.fetch({ limit: 100 });

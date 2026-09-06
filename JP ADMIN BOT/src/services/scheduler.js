@@ -124,11 +124,12 @@ class Scheduler {
     }
   }
 
-  async runWeeklyRiskAndOneOnOneSchedule() {
+  async runWeeklyRiskAndOneOnOneSchedule(targetGuild = null) {
     Logger.info("[WeeklyRiskAudit] Running Thursday 18:30 Drop-out Predictor & 1-on-1 Auto-Scheduler.");
     const todayStr = DateTimeUtil.getTodayDateStr();
+    const guilds = targetGuild ? [targetGuild] : Array.from(this.client.guilds.cache.values());
 
-    for (const guild of this.client.guilds.cache.values()) {
+    for (const guild of guilds) {
       const scoringStartDate = cohortManager.getScoringStartDate(guild.id);
       if (scoringStartDate && todayStr < scoringStartDate) {
         Logger.info(`[WeeklyRiskAudit] Skipping Thursday risk audit for guild ${guild.id}: Scoring reset until ${scoringStartDate}.`);
@@ -459,103 +460,16 @@ class Scheduler {
     }
   }
 
-  /**
-   * Daily Job Audit at 23:30 with custom Tiered Scoring rules & Warning mentions
-   */
-  async runDailyJobAudit() {
-    Logger.info("[DailyJobAudit] Running 23:30 job tracking audit.");
-    const todayDate = DateTimeUtil.getTodayDateStr();
-
-    for (const guild of this.client.guilds.cache.values()) {
-      try {
-        if (cohortManager.isOffday(guild.id, todayDate)) {
-          Logger.info(`[DailyJobAudit] Skipping 23:30 job audit for guild ${guild.id}: Today is an Offday/Holiday.`);
-          continue;
-        }
-
-        const scoringStartDate = cohortManager.getScoringStartDate(guild.id);
-        if (scoringStartDate && todayDate < scoringStartDate) {
-          Logger.info(`[DailyJobAudit] Skipping 23:30 job audit for guild ${guild.id}: Scoring reset until ${scoringStartDate}.`);
-          continue;
-        }
-
-        const cohort = cohortManager.getCohort(guild.id);
-        const target = cohort?.targets?.applications || constants.SCORING.DEFAULT_JOB_TARGET;
-
-        const rosterRes = await GasClient.getRoster(guild.id);
-        const activeStudents = (rosterRes.students || []).filter(s => s.status === 'active');
-
-        const metTargetList = [];
-        const belowTargetList = [];
-
-        for (const student of activeStudents) {
-          const member = guild.members.cache.get(student.discordId);
-          if (member && cohortManager.isStaff(guild.id, member)) continue;
-
-          let countToday = 0;
-          let totalRows = 0;
-
-          // Attempt scrape if student's public sheet is linked
-          const sheetRes = await GasClient.request(guild.id, 'getJobSheets', {}).catch(() => ({ sheets: [] }));
-          const studentSheet = (sheetRes.sheets || []).find(s => s.discordId === student.discordId);
-
-          if (studentSheet && studentSheet.sheetUrl) {
-            const scrape = await JobScraperService.scrapeStudentJobSheet(studentSheet.sheetUrl, student.discordId);
-            if (scrape.success) {
-              countToday = scrape.datedTodayCount;
-              totalRows = scrape.totalRows;
-            }
-          }
-
-          const points = ScoringService.calculateDailyJobScore(countToday, target);
-
-          // Record daily metric to Google Sheets
-          await GasClient.recordJobDaily(guild.id, {
-            date: todayDate,
-            email: student.email,
-            count: countToday,
-            name: student.name || student.username,
-            discordId: student.discordId,
-            totalRows: totalRows,
-            newRows: countToday,
-            points: points
-          }).catch(() => {});
-
-          if (countToday >= target) {
-            metTargetList.push({ ...student, count: countToday, points });
-          } else {
-            belowTargetList.push({ ...student, count: countToday, points });
-          }
-        }
-
-        const channel = this.getChannel(guild, 'JOB_TRACKING');
-        if (channel) {
-          const belowMentions = belowTargetList.map(s => `• <@${s.discordId}> (${s.name}): **${s.count}/${target}** apps (\`${s.points >= 0 ? '+' : ''}${s.points} pts\`)`).join('\n');
-          const metMentions = metTargetList.slice(0, 10).map(s => `• <@${s.discordId}> (${s.name}): **${s.count}/${target}** apps (\`+${s.points} pts\`)`).join('\n');
-
-          const embed = Embeds.info(
-            `Daily Job Application Audit (11:30 PM) · ${todayDate}`,
-            `**Target for Today:** **${target} Applications**\n\n` +
-            `**🎯 Met / Exceeded Target (${metTargetList.length} students):**\n${metMentions || 'None yet'}\n\n` +
-            `**⚠️ Below Target (${belowTargetList.length} students):**\n${belowMentions || '✅ Everyone met their target today!'}\n\n` +
-            `*Tiered points calculated and synced to Google Sheets database.*`
-          );
-
-          await channel.send({ embeds: [embed] }).catch(() => {});
-        }
-      } catch (err) {
-        Logger.error(`Job audit error for guild ${guild.id}:`, err.message);
-      }
-    }
-  }
 
   /**
    * Daily Job Task Deadline Overdue Monitor (00:05 AM)
    * Applies -2 points penalty if deadline expired without submission
    */
-  async runJobTaskDeadlineAudit() {
+  async runJobTaskDeadlineAudit(targetGuild = null) {
     Logger.info("[TaskDeadlineAudit] Running 00:05 overdue task audit.");
-    for (const guild of this.client.guilds.cache.values()) {
+    const guilds = targetGuild ? [targetGuild] : Array.from(this.client.guilds.cache.values());
+
+    for (const guild of guilds) {
       try {
         const res = await GasClient.auditOverdueTasks(guild.id);
         if (res && res.overdueCount > 0) {
@@ -579,11 +493,12 @@ class Scheduler {
    * Weekly Performance Leaderboard (Thursday 11:30 PM / 23:30)
    * Publishes full student standings with @everyone mention to #referral-leaderboard
    */
-  async runWeeklyLeaderboard() {
+  async runWeeklyLeaderboard(targetGuild = null) {
     Logger.info("[WeeklyLeaderboard] Publishing Thursday 23:30 weekly leaderboard.");
     const todayStr = DateTimeUtil.getTodayDateStr();
+    const guilds = targetGuild ? [targetGuild] : Array.from(this.client.guilds.cache.values());
 
-    for (const guild of this.client.guilds.cache.values()) {
+    for (const guild of guilds) {
       const scoringStartDate = cohortManager.getScoringStartDate(guild.id);
       if (scoringStartDate && todayStr < scoringStartDate) {
         Logger.info(`[WeeklyLeaderboard] Skipping Thursday leaderboard for guild ${guild.id}: Scoring reset until ${scoringStartDate}.`);

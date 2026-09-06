@@ -6,6 +6,7 @@
 
 const Logger = require('../utils/logger');
 const ChannelHelper = require('../utils/channelHelper');
+const GasClient = require('./gasClient');
 const MessageHandler = require('../handlers/messageHandler');
 
 class CatchupService {
@@ -35,12 +36,21 @@ class CatchupService {
 
     Logger.info(`[CatchupService] Starting backlog scan for guild: ${guild.name} (Max Age: ${maxAgeHours}h)`);
 
-    // Find all text channels where bot has permissions to read and send messages
-    const textChannels = Array.from(guild.channels.cache.values()).filter(ch => {
-      if (ch.type !== 0) return false; // 0 = GuildText
-      const perms = ch.permissionsFor(guild.members.me);
-      return perms && perms.has('ViewChannel') && perms.has('ReadMessageHistory') && perms.has('SendMessages');
-    });
+    // Target only the recognized action channels instead of all guild channels
+    const targetKeys = ['INTERVIEW_UPDATE', 'JOB_TASK', 'JOB_TRACKING', 'LEAVE_REQUEST', 'LEAVE'];
+    const seenChannelIds = new Set();
+    const textChannels = [];
+
+    for (const key of targetKeys) {
+      const ch = ChannelHelper.findChannel(guild, key);
+      if (ch && !seenChannelIds.has(ch.id)) {
+        seenChannelIds.add(ch.id);
+        const perms = ch.permissionsFor(guild.members.me);
+        if (perms && perms.has('ViewChannel') && perms.has('ReadMessageHistory') && perms.has('SendMessages')) {
+          textChannels.push(ch);
+        }
+      }
+    }
 
     for (const channel of textChannels) {
       try {

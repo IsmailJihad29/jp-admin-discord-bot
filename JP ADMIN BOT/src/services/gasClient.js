@@ -13,11 +13,18 @@ class GasClient {
     const secret = cohort ? cohort.gasSecret : process.env.DEFAULT_GAS_SECRET;
 
     if (!gasUrl || gasUrl.includes("YOUR_DEPLOYMENT_ID")) {
-      throw new Error(`Google Apps Script URL not configured for server ${guildId}`);
+      throw new Error(`Google Apps Script URL is not configured for server "${guildId}". Run "!setgas <Web_App_URL>" to link this server to its own Google Sheet.`);
     }
 
+    // Action alias resolution to match Code.gs cases
+    const actionAliases = {
+      'repairLeaves': 'repairLeaveRequests',
+      'getAllInterviews': 'getInterviews'
+    };
+    const resolvedAction = actionAliases[action] || action;
+
     const payload = {
-      action: action,
+      action: resolvedAction,
       secret: secret,
       data: data
     };

@@ -44,12 +44,15 @@ class CohortManager {
     if (!guildId) return null;
     let cohort = this.cohorts.get(guildId);
     if (!cohort) {
-      // Default fallback cohort structure using environment settings
+      // Check for guild-specific environment variable (e.g. GAS_URL_123456789 for Render persistence)
+      const guildEnvGasUrl = process.env[`GAS_URL_${guildId}`];
+      const guildEnvSecret = process.env[`GAS_SECRET_${guildId}`];
+
       cohort = {
         serverId: guildId,
-        name: "Default Cohort",
-        gasUrl: process.env.DEFAULT_GAS_URL || "",
-        gasSecret: process.env.DEFAULT_GAS_SECRET || "",
+        name: "Cohort " + guildId,
+        gasUrl: guildEnvGasUrl || process.env.DEFAULT_GAS_URL || "",
+        gasSecret: guildEnvSecret || process.env.DEFAULT_GAS_SECRET || "JP_ADMIN_26",
         timezone: process.env.DEFAULT_TIMEZONE || constants.DEFAULT_TIMEZONE,
         supervisors: [],
         targets: {
@@ -70,8 +73,20 @@ class CohortManager {
       };
       this.cohorts.set(guildId, cohort);
       this.saveToDisk();
+    } else {
+      // Rehydrate from guild-specific env if present and not set in local disk
+      const guildEnvGasUrl = process.env[`GAS_URL_${guildId}`];
+      if (guildEnvGasUrl && !cohort.gasUrl) {
+        cohort.gasUrl = guildEnvGasUrl;
+      }
     }
     return cohort;
+  }
+
+  hasConfiguredGas(guildId) {
+    const cohort = this.getCohort(guildId);
+    if (!cohort || !cohort.gasUrl) return false;
+    return cohort.gasUrl.startsWith('https://script.google.com/macros/s/') && !cohort.gasUrl.includes("YOUR_DEPLOYMENT_ID");
   }
 
   setCohort(guildId, data) {

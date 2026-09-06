@@ -139,56 +139,8 @@ client.on('interactionCreate', async (interaction) => {
   await InteractionHandler.handle(interaction, client);
 });
 
-// Mentor / CR Emoji Reaction Verification for Interview Posts (✅)
-client.on('messageReactionAdd', async (reaction, user) => {
-  try {
-    if (user.bot) return;
-    if (reaction.partial) await reaction.fetch().catch(() => {});
-    if (reaction.message.partial) await reaction.message.fetch().catch(() => {});
-
-    const message = reaction.message;
-    if (!message.guild) return;
-
-    if (reaction.emoji.name === '✅' && ChannelHelper.isChannel(message.channel, 'INTERVIEW_UPDATE')) {
-      const cohortManager = require('./config/cohortManager');
-      const member = await message.guild.members.fetch(user.id).catch(() => null);
-      if (!member || !cohortManager.isMentor(message.guild.id, member)) return;
-
-      // Only verify if author is not bot and not already marked verified
-      if (message.author.bot) return;
-
-      const GeminiService = require('./services/geminiService');
-      const validation = await GeminiService.validateInterviewPost(message.content);
-      const GasClient = require('./services/gasClient');
-
-      const studentName = message.author.displayName || message.author.username;
-      const company = validation.company || "Company";
-      const role = validation.role || "Software Engineer";
-      const date = validation.interviewDate || DateTimeUtil.getTodayDateStr();
-
-      await GasClient.recordInterview(message.guild.id, {
-        name: studentName,
-        discordId: message.author.id,
-        company: company,
-        serial: 1,
-        interviewDate: date,
-        roleDetails: role,
-        discordLink: message.url
-      });
-
-      const confirmEmbed = Embeds.success(
-        "Interview Verified! 🎯",
-        `✅ Interview at **${company}** for <@${message.author.id}> has been **verified** by <@${user.id}>.\n\n` +
-        `• 🏆 **Points Awarded:** \`+1.0 Point\`\n` +
-        `• 📅 **Date on Record:** \`${date}\``
-      );
-
-      await message.reply({ embeds: [confirmEmbed] }).catch(() => {});
-    }
-  } catch (err) {
-    Logger.error("Error in messageReactionAdd:", err.message);
-  }
-});
+// Note: Interview verification is handled via the "✅ Verify Interview" button
+// in InteractionHandler (customId: interview_verify_*) — no emoji reaction handler needed.
 
 // Gateway Disconnect & Auto-Recovery Handlers
 client.on('shardDisconnect', (event, id) => {

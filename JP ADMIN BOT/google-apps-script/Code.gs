@@ -152,6 +152,7 @@ function doPost(e) {
         return jsonResponse(getLeavesList(ss, data.status));
 
       case "repairLeaveRequests":
+      case "repairLeaves":
       case "syncLeaves":
         return jsonResponse(repairLeaveRequestsMatrix(ss));
 
@@ -174,6 +175,7 @@ function doPost(e) {
         return jsonResponse(voidInterviewEntry(ss, data));
 
       case "getInterviews":
+      case "getAllInterviews":
         return jsonResponse(getInterviewsHistory(ss, data.days));
 
       case "recordJobTask":
@@ -975,7 +977,9 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
   }
 
   // 1. Get active students from Bot_Map
+  // Build email-to-discordId map for students who may not have discordId in form submission
   var botMapValues = botMapSheet.getDataRange().getValues();
+  var emailToDiscordId = {};
   var students = [];
   for (var i = 1; i < botMapValues.length; i++) {
     var email = String(botMapValues[i][0] || "").toLowerCase().trim();
@@ -985,7 +989,10 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
     var status = String(botMapValues[i][4] || "active").toLowerCase().trim();
     var phone = String(botMapValues[i][7] || "").replace(/[^0-9]/g, '');
 
-    if (dId && status === 'active') {
+    if (email && dId) emailToDiscordId[email] = dId;
+
+    // Include students with email OR discordId (email-only students matched via Bot_Map lookup)
+    if ((email || dId) && status === 'active') {
       students.push({ email: email, name: name, username: uName, discordId: dId, phone: phone, rowIdx: i + 1 });
     }
   }
@@ -1052,10 +1059,11 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
   var attendanceRecords = [];
 
   students.forEach(function(s) {
+    var resolvedDiscordId = s.discordId || (s.email && emailToDiscordId[s.email]) || "";
     var isPresent = false;
     if (s.email && presentSubmissions[s.email]) isPresent = true;
     if (s.username && presentSubmissions[s.username]) isPresent = true;
-    if (s.discordId && presentSubmissions[s.discordId]) isPresent = true;
+    if (resolvedDiscordId && presentSubmissions[resolvedDiscordId]) isPresent = true;
     if (s.phone && presentSubmissions[s.phone]) isPresent = true;
     if (s.name && presentSubmissions[s.name.toLowerCase()]) isPresent = true;
 
@@ -1066,7 +1074,7 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
       status = 'P';
       pts = 1;
       presentCount++;
-    } else if (approvedLeaves[s.discordId]) {
+    } else if (approvedLeaves[resolvedDiscordId]) {
       status = 'L';
       pts = 0;
       leaveCount++;
@@ -1077,7 +1085,7 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
     }
 
     attendanceRecords.push({
-      discordId: s.discordId,
+      discordId: resolvedDiscordId || s.discordId,
       name: s.name,
       email: s.email,
       status: status,
@@ -1128,7 +1136,9 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
   }
 
   // 1. Get active students from Bot_Map
+  // Build email-to-discordId map for students who submitted via email in the form
   var botMapValues = botMapSheet.getDataRange().getValues();
+  var emailToDiscordId = {};
   var students = [];
   for (var i = 1; i < botMapValues.length; i++) {
     var email = String(botMapValues[i][0] || "").toLowerCase().trim();
@@ -1138,7 +1148,9 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
     var status = String(botMapValues[i][4] || "active").toLowerCase().trim();
     var phone = String(botMapValues[i][7] || "").replace(/[^0-9]/g, '');
 
-    if (dId && status === 'active') {
+    if (email && dId) emailToDiscordId[email] = dId;
+
+    if ((email || dId) && status === 'active') {
       students.push({ email: email, name: name, username: uName, discordId: dId, phone: phone, rowIdx: i + 1 });
     }
   }
@@ -1205,10 +1217,11 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
   var attendanceRecords = [];
 
   students.forEach(function(s) {
+    var resolvedDiscordId = s.discordId || (s.email && emailToDiscordId[s.email]) || "";
     var isPresent = false;
     if (s.email && presentSubmissions[s.email]) isPresent = true;
     if (s.username && presentSubmissions[s.username]) isPresent = true;
-    if (s.discordId && presentSubmissions[s.discordId]) isPresent = true;
+    if (resolvedDiscordId && presentSubmissions[resolvedDiscordId]) isPresent = true;
     if (s.phone && presentSubmissions[s.phone]) isPresent = true;
     if (s.name && presentSubmissions[s.name.toLowerCase()]) isPresent = true;
 
@@ -1219,7 +1232,7 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
       status = 'P';
       pts = 1;
       presentCount++;
-    } else if (approvedLeaves[s.discordId]) {
+    } else if (approvedLeaves[resolvedDiscordId]) {
       status = 'L';
       pts = 0;
       leaveCount++;
@@ -1230,7 +1243,7 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
     }
 
     attendanceRecords.push({
-      discordId: s.discordId,
+      discordId: resolvedDiscordId || s.discordId,
       name: s.name,
       email: s.email,
       status: status,
@@ -1366,7 +1379,9 @@ function scanCustomAttendanceFromForm(ss, customTabName, dateStr, customLabel) {
   }
 
   // 1. Get active students from Bot_Map (excluding staff/mentors/supervisors)
+  // Build email-to-discordId lookup so form email submissions can be resolved to discordId
   var botMapValues = botMapSheet.getDataRange().getValues();
+  var emailToDiscordId = {};
   var students = [];
   for (var i = 1; i < botMapValues.length; i++) {
     var email = String(botMapValues[i][0] || "").toLowerCase().trim();
@@ -1376,7 +1391,10 @@ function scanCustomAttendanceFromForm(ss, customTabName, dateStr, customLabel) {
     var status = String(botMapValues[i][4] || "active").toLowerCase().trim();
     var phone = String(botMapValues[i][7] || "").replace(/[^0-9]/g, '');
 
-    if (dId && status === 'active') {
+    if (email && dId) emailToDiscordId[email] = dId;
+
+    // Include students who have email (even without discordId yet) — email match from form will resolve them
+    if ((email || dId) && status === 'active') {
       students.push({ email: email, name: name, username: uName, discordId: dId, phone: phone, rowIdx: i + 1 });
     }
   }
@@ -1443,10 +1461,12 @@ function scanCustomAttendanceFromForm(ss, customTabName, dateStr, customLabel) {
   var attendanceRecords = [];
 
   students.forEach(function(s) {
+    // Resolve discordId via email lookup from Bot_Map if not directly available
+    var resolvedDiscordId = s.discordId || (s.email && emailToDiscordId[s.email]) || "";
     var isPresent = false;
     if (s.email && presentSubmissions[s.email]) isPresent = true;
     if (s.username && presentSubmissions[s.username]) isPresent = true;
-    if (s.discordId && presentSubmissions[s.discordId]) isPresent = true;
+    if (resolvedDiscordId && presentSubmissions[resolvedDiscordId]) isPresent = true;
     if (s.phone && presentSubmissions[s.phone]) isPresent = true;
     if (s.name && presentSubmissions[s.name.toLowerCase()]) isPresent = true;
 
@@ -1457,7 +1477,7 @@ function scanCustomAttendanceFromForm(ss, customTabName, dateStr, customLabel) {
       status = 'P';
       pts = 1;
       presentCount++;
-    } else if (approvedLeaves[s.discordId]) {
+    } else if (approvedLeaves[resolvedDiscordId]) {
       status = 'L';
       pts = 0;
       leaveCount++;
@@ -1468,7 +1488,7 @@ function scanCustomAttendanceFromForm(ss, customTabName, dateStr, customLabel) {
     }
 
     attendanceRecords.push({
-      discordId: s.discordId,
+      discordId: resolvedDiscordId || s.discordId,
       name: s.name,
       email: s.email,
       status: status,

@@ -19,38 +19,77 @@ module.exports = {
     const loading = await message.reply("💼 Running exhaustive audit across all student job tracking sheets...");
 
     try {
-      const rosterRes = await GasClient.getRoster(guildId);
-      const activeStudents = (rosterRes.students || []).filter(s => s.status === 'active');
+      const [rosterRes, sheetRes] = await Promise.all([
+        GasClient.getRoster(guildId).catch(() => ({ students: [] })),
+        GasClient.request(guildId, 'getJobSheets').catch(() => ({ sheets: [] }))
+      ]);
 
-      const todayDate = DateTimeUtil.getTodayDateStr();
+      const activeStudents = (rosterRes.students || []).filter(s => s.status === 'active');
+      const studentSheetsMap = new Map((sheetRes.sheets || []).map(s => [s.discordId, s.sheetUrl]));
+
+      const todayDate = args[0] || DateTimeUtil.getTodayDateStr();
       const results = [];
+      let totalTodayApps = 0;
+      let linkedSheetsCount = 0;
 
       for (const student of activeStudents) {
-        // Scrape student sheet if URL exists
+        const sheetUrl = studentSheetsMap.get(student.discordId);
+        let countToday = 0;
+        let totalRows = 0;
+        let isScraped = false;
+
+        if (sheetUrl) {
+          linkedSheetsCount++;
+          const scrape = await JobScraperService.scrapeStudentJobSheet(sheetUrl, student.discordId);
+          if (scrape.success) {
+            countToday = scrape.datedTodayCount || 0;
+            totalRows = scrape.totalRows || 0;
+            isScraped = true;
+            totalTodayApps += countToday;
+          }
+          await new Promise(r => setTimeout(r, 500));
+        }
+
         const result = {
           discordId: student.discordId,
           name: student.name || student.username,
-          countToday: 0,
-          totalRows: 0
+          hasSheet: !!sheetUrl,
+          isScraped: isScraped,
+          countToday: countToday,
+          totalRows: totalRows
         };
 
         // Record daily job metric to Apps Script
-        await GasClient.recordJobDaily(guildId, {
-          date: todayDate,
-          email: student.email,
-          count: result.countToday,
-          name: result.name,
-          discordId: student.discordId,
-          totalRows: result.totalRows,
-          newRows: result.countToday
-        }).catch(() => {});
+        if (sheetUrl) {
+          await GasClient.recordJobDaily(guildId, {
+            date: todayDate,
+            email: student.email,
+            count: countToday,
+            name: result.name,
+            discordId: student.discordId,
+            totalRows: totalRows,
+            newRows: countToday
+          }).catch(() => {});
+        }
 
         results.push(result);
       }
 
+      const summaryList = results.slice(0, 15).map(r => {
+        if (!r.hasSheet) {
+          return `• <@${r.discordId}> (${r.name}): ⚠️ *No Job Sheet Linked*`;
+        }
+        return `• <@${r.discordId}> (${r.name}): **${r.countToday}** today | **${r.totalRows}** total`;
+      }).join('\n');
+
       const embed = Embeds.success(
         `Job Tracking Sheet Audit · ${todayDate}`,
-        `• **Active Students Checked:** **${activeStudents.length}**\n• **Reconciled with \`Jobs_Daily\` and \`Jobs Applied\` matrix.**\n\n${results.slice(0, 15).map(r => `• <@${r.discordId}> (${r.name}): **${r.countToday}** today | **${r.totalRows}** total`).join('\n')}`
+        `• 👥 **Active Students Checked:** **${activeStudents.length}**\n` +
+        `• 📊 **Linked Trackers:** **${linkedSheetsCount}/${activeStudents.length}**\n` +
+        `• 💼 **Total Applications Found Today:** **${totalTodayApps}**\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `${summaryList}\n\n` +
+        (results.length > 15 ? `*...and ${results.length - 15} more active students.*` : '')
       );
 
       await loading.edit({ content: null, embeds: [embed] });
