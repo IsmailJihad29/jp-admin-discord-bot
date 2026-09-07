@@ -13,7 +13,7 @@ module.exports = {
   aliases: ['reflock', 'lockoutreport', 'referrallock'],
   description: 'Audits student scores/absences and locks/unlocks #resume-needed channel',
   usage: '!referralaccess [enforce | unlockall | @student]',
-  supervisorOnly: true,
+  mentorOnly: true,
 
   async execute(message, args, client) {
     const guild = message.guild;
@@ -70,9 +70,9 @@ module.exports = {
         const res = await ReferralLockoutService.unlockAll(guild);
         const embed = Embeds.success(
           "Referral Restrictions Cleared! 🔓",
-          `✅ Removed \`${constants.ROLES.REFERRAL_RESTRICTED}\` role from **${res.unlocked} member(s)**.\n\n` +
-          `• 📄 **#resume-needed Channel:** Full viewing access restored for all students with **\`Active Student\`** role.\n` +
-          `• 🔒 **Rule Reminder:** Students with negative score (< 0) or > 3 absences will be locked automatically during nightly audits.`
+          `✅ Removed \`${constants.ROLES.REFERRAL_RESTRICTED}\` role from **${res.rolesRemoved || 0} member(s)** and cleared **${res.unlocked || 0} channel lock(s)**.\n\n` +
+          `• 📄 **#resume-needed Channel:** Full viewing access restored for all students with **\`Active Student\`** role and **\`@everyone\`**.\n` +
+          `• 🔒 **Rule Reminder:** Students with negative score (< 0) or 3 consecutive absences will be locked during scheduled audits.`
         );
         return loading.edit({ content: null, embeds: [embed] });
       } catch (err) {

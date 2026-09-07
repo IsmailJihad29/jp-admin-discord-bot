@@ -129,12 +129,14 @@ class ReferralLockoutService {
   }
 
   /**
-   * Ensures #resume-needed channel is open to @everyone by default
+   * Ensures #resume-needed channel is open to @everyone and @Active Student by default
    */
   static async ensureRestrictionRoleAndPermissions(guild) {
     const resumeChannel = ChannelHelper.findChannel(guild, 'RESUME_REFERRAL');
-    if (resumeChannel && guild.roles.everyone) {
-      // By default @everyone MUST be able to view and send messages in #resume-needed
+    if (!resumeChannel) return null;
+
+    // 1. Give access to @everyone
+    if (guild.roles.everyone) {
       await resumeChannel.permissionOverwrites.edit(guild.roles.everyone, {
         ViewChannel: true,
         ReadMessageHistory: true,
@@ -144,8 +146,47 @@ class ReferralLockoutService {
       }).catch(() => {});
     }
 
-    let restrictionRole = guild.roles.cache.find(r => r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
-    if (restrictionRole && resumeChannel) {
+    // 2. Explicitly grant access to Active Student role (handles private category setups)
+    const studentRole = guild.roles.cache.find(r => r && r.name && (
+      r.name.toLowerCase() === (constants.ROLES.ACTIVE_STUDENT || 'active student').toLowerCase() ||
+      r.name.toLowerCase() === 'student' ||
+      r.name.toLowerCase() === 'students'
+    ));
+    if (studentRole) {
+      await resumeChannel.permissionOverwrites.edit(studentRole, {
+        ViewChannel: true,
+        ReadMessageHistory: true,
+        SendMessages: true,
+        AttachFiles: true,
+        EmbedLinks: true
+      }).catch(() => {});
+    }
+
+    // 3. Ensure Mentors & Supervisors have full access
+    const mentorRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.MENTOR || 'mentor').toLowerCase());
+    if (mentorRole) {
+      await resumeChannel.permissionOverwrites.edit(mentorRole, {
+        ViewChannel: true,
+        ReadMessageHistory: true,
+        SendMessages: true,
+        AttachFiles: true,
+        EmbedLinks: true
+      }).catch(() => {});
+    }
+    const supervisorRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.SUPERVISOR || 'supervisor').toLowerCase());
+    if (supervisorRole) {
+      await resumeChannel.permissionOverwrites.edit(supervisorRole, {
+        ViewChannel: true,
+        ReadMessageHistory: true,
+        SendMessages: true,
+        AttachFiles: true,
+        EmbedLinks: true
+      }).catch(() => {});
+    }
+
+    // 4. Deny access to Referral Restricted role
+    let restrictionRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
+    if (restrictionRole) {
       await resumeChannel.permissionOverwrites.edit(restrictionRole, {
         ViewChannel: false,
         SendMessages: false,
@@ -159,13 +200,16 @@ class ReferralLockoutService {
   /**
    * Enforces locks using direct member overwrites & role:
    * - Locked students get ViewChannel: false specifically
-   * - Regular students have full access through @everyone
+   * - Regular students have full access through @everyone / @Active Student
    */
   static async enforceCohortAccessLocks(guild) {
     await this.ensureRestrictionRoleAndPermissions(guild);
     const resumeChannel = ChannelHelper.findChannel(guild, 'RESUME_REFERRAL');
-    const restrictionRole = guild.roles.cache.find(r => r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
+    const restrictionRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
     const cohortManager = require('../config/cohortManager');
+
+    // Fetch members to ensure full cache
+    await guild.members.fetch().catch(() => {});
 
     const evaluated = await this.evaluateCohortPerformance(guild.id);
     const lockedList = [];
@@ -174,7 +218,7 @@ class ReferralLockoutService {
     for (const s of evaluated) {
       if (!s.discordId) continue;
       try {
-        const member = await guild.members.fetch(s.discordId).catch(() => null);
+        const member = guild.members.cache.get(s.discordId) || await guild.members.fetch(s.discordId).catch(() => null);
         if (!member) continue;
 
         // Skip mentors & supervisors completely
@@ -220,7 +264,7 @@ class ReferralLockoutService {
         } else {
           // ── UNLOCK STUDENT (Score >= 0 & not 3 consecutive absences) ──
           if (resumeChannel) {
-            // Delete member-specific deny overwrite so @everyone permission takes over (unlocked!)
+            // Delete member-specific deny overwrite so @everyone / @Active Student permission takes over (unlocked!)
             await resumeChannel.permissionOverwrites.delete(member.id).catch(() => {});
           }
           if (restrictionRole && member.roles.cache.has(restrictionRole.id)) {
@@ -248,40 +292,33 @@ class ReferralLockoutService {
    */
   static async unlockAll(guild) {
     const resumeChannel = ChannelHelper.findChannel(guild, 'RESUME_REFERRAL');
-    let clearedCount = 0;
+    await this.ensureRestrictionRoleAndPermissions(guild);
+
+    let clearedOverwrites = 0;
+    let clearedRoles = 0;
 
     if (resumeChannel) {
-      // 1. Ensure @everyone has ViewChannel: true
-      if (guild.roles.everyone) {
-        await resumeChannel.permissionOverwrites.edit(guild.roles.everyone, {
-          ViewChannel: true,
-          ReadMessageHistory: true,
-          SendMessages: true,
-          AttachFiles: true,
-          EmbedLinks: true
-        }).catch(() => {});
-      }
-
-      // 2. Clear all member-specific deny overwrites from the channel
+      // Clear all member-specific deny overwrites from the channel
       for (const overwrite of resumeChannel.permissionOverwrites.cache.values()) {
         if (overwrite.type === 1) { // 1 = Member overwrite
           await resumeChannel.permissionOverwrites.delete(overwrite.id).catch(() => {});
-          clearedCount++;
+          clearedOverwrites++;
         }
       }
     }
 
-    // 3. Remove 'Referral Restricted' role if any
-    const restrictionRole = guild.roles.cache.find(r => r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
+    // Fetch all members from Discord API to guarantee finding everyone with restriction role
+    await guild.members.fetch().catch(() => {});
+
+    const restrictionRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
     if (restrictionRole) {
-      for (const member of guild.members.cache.values()) {
-        if (member.roles.cache.has(restrictionRole.id)) {
-          await member.roles.remove(restrictionRole).catch(() => {});
-        }
+      for (const member of restrictionRole.members.values()) {
+        await member.roles.remove(restrictionRole).catch(() => {});
+        clearedRoles++;
       }
     }
 
-    return { unlocked: clearedCount };
+    return { unlocked: clearedOverwrites, rolesRemoved: clearedRoles };
   }
 }
 
