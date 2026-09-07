@@ -19,23 +19,88 @@ module.exports = {
 
     if (commandName === 'absent') {
       const targetDate = args[0] || DateTimeUtil.getTodayDateStr();
+      const normTarget = DateTimeUtil.normalizeDateStr(targetDate);
       const loading = await message.reply(`🔍 Fetching absent students for date \`${targetDate}\`...`);
 
       try {
         const attData = await GasClient.getAttendance(guildId);
+        const dates = attData.dates || [];
         const rows = attData.rows || [];
 
-        const absents = rows.filter(r => {
-          const mark = r.sessions && r.sessions[targetDate];
-          return !mark || mark === 'A';
+        // Find session column headers that match targetDate
+        const matchingSessions = dates.filter(d => {
+          const nd = DateTimeUtil.normalizeDateStr(d);
+          return (nd && nd === normTarget) || d.toLowerCase().includes(targetDate.toLowerCase());
         });
 
-        const embed = Embeds.info(
-          `Absent Students (${targetDate})`,
-          `Total Absent: **${absents.length}**\n\n${absents.map(a => `• <@${a.discordId}> — ${a.name} (${a.email})`).join('\n') || 'None recorded absent.'}`
-        );
+        // If no matching session found, return a helpful notice with recent recorded dates
+        if (matchingSessions.length === 0) {
+          const recentDates = dates.slice(-5).map(d => `• \`${d}\``).join('\n') || 'None recorded yet.';
+          return loading.edit({
+            content: null,
+            embeds: [Embeds.warning(
+              "No Attendance Session Found",
+              `No attendance records found for date \`${targetDate}\`.\n\n` +
+              `📅 **Latest Recorded Sessions:**\n${recentDates}\n\n` +
+              `💡 *Use \`!absent <YYYY-MM-DD>\` matching one of the recorded session dates above.*`
+            )]
+          });
+        }
 
-        await loading.edit({ content: null, embeds: [embed] });
+        const allEmbeds = [];
+
+        for (const sessionKey of matchingSessions) {
+          const absents = [];
+          const presents = [];
+          const leaves = [];
+
+          rows.forEach(r => {
+            const mark = r.sessions && r.sessions[sessionKey];
+            const clean = String(mark || '').toUpperCase().trim();
+            if (clean === 'A' || clean === 'ABSENT' || clean.startsWith('A')) {
+              absents.push(r);
+            } else if (clean === 'P' || clean === 'PRESENT' || clean.startsWith('P')) {
+              presents.push(r);
+            } else if (clean === 'L' || clean === 'LEAVE' || clean === 'EXCUSED') {
+              leaves.push(r);
+            }
+          });
+
+          // Paginate absents in chunks of 25 to respect Discord 4096 character limits
+          const BATCH_SIZE = 25;
+          const totalBatches = Math.ceil(absents.length / BATCH_SIZE) || 1;
+
+          for (let b = 0; b < totalBatches; b++) {
+            const batchStudents = absents.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
+            const listText = batchStudents.map((a, idx) => {
+              const num = b * BATCH_SIZE + idx + 1;
+              const emailPart = a.email ? ` | \`${a.email}\`` : '';
+              return `${num}. <@${a.discordId}> — **${a.name || 'Student'}**${emailPart}`;
+            }).join('\n');
+
+            const title = totalBatches > 1
+              ? `Absent Students · ${sessionKey} (${b + 1}/${totalBatches})`
+              : `Absent Students · ${sessionKey}`;
+
+            const headerDesc = b === 0
+              ? `📊 **Session Summary:**\n• **Enrolled:** ${rows.length} | **Present:** ${presents.length} | **Absent:** ${absents.length} | **Leave:** ${leaves.length}\n\n**Absent List:**\n`
+              : `**Absent List (Continued):**\n`;
+
+            allEmbeds.push(Embeds.info(
+              title,
+              headerDesc + (listText || 'None recorded absent.')
+            ));
+          }
+        }
+
+        // Send up to 10 embeds in the edited message, and any remaining in follow-up messages
+        const initialBatch = allEmbeds.slice(0, 10);
+        await loading.edit({ content: null, embeds: initialBatch });
+
+        for (let i = 10; i < allEmbeds.length; i += 10) {
+          const followUpBatch = allEmbeds.slice(i, i + 10);
+          await message.channel.send({ embeds: followUpBatch });
+        }
       } catch (err) {
         await loading.edit({ content: null, embeds: [Embeds.error("Error", err.message)] });
       }
