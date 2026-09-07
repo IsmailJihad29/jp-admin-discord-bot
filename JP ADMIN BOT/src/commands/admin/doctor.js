@@ -9,7 +9,7 @@ const Embeds = require('../../utils/embedBuilder');
 
 module.exports = {
   name: 'doctor',
-  description: 'Diagnoses bot health, Apps Script v47 backend, tabs, and permissions',
+  description: `Diagnoses bot health, Apps Script backend (${constants.EXPECTED_GAS_VERSION}), tabs, and permissions`,
   usage: '!doctor',
   mentorOnly: true,
 

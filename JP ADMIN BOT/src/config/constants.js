@@ -4,8 +4,8 @@
  */
 
 module.exports = {
-  BOT_VERSION: "v3.30",
-  EXPECTED_GAS_VERSION: "v50",
+  BOT_VERSION: "v3.31",
+  EXPECTED_GAS_VERSION: "v51",
   DEFAULT_TIMEZONE: "Asia/Dhaka",
 
   // Recognized Channels for auto-discovery and operations
