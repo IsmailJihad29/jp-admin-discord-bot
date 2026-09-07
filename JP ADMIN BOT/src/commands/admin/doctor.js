@@ -18,14 +18,15 @@ module.exports = {
 
     try {
       const doctorRes = await GasClient.getDoctor(message.guild.id);
-      const isVersionMatch = doctorRes.version === constants.EXPECTED_GAS_VERSION;
+      const supportedVersions = ['v50', 'v51'];
+      const isVersionMatch = supportedVersions.includes(doctorRes.version);
 
       const hasAdmin = message.guild.members.me.permissions.has('Administrator');
       const missingTabs = doctorRes.missingTabs || [];
 
       const statusDesc = [
         `**Bot Version:** \`${constants.BOT_VERSION}\``,
-        `**Apps Script Backend:** \`${doctorRes.version || 'Offline'}\` (Expected: \`${constants.EXPECTED_GAS_VERSION}\`) ${isVersionMatch ? '✅' : '⚠️ *Version Mismatch!*'}`,
+        `**Apps Script Backend:** \`${doctorRes.version || 'Offline'}\` (Target: \`${constants.EXPECTED_GAS_VERSION}\`) ${isVersionMatch ? '✅' : '⚠️ *Version Mismatch!*'}`,
         `**Discord Permissions:** ${hasAdmin ? '✅ `Administrator` (Full access)' : '⚠️ *Missing Administrator permission*'}`,
         `**Database Tabs Status:** ${missingTabs.length === 0 ? '✅ All 10 core required tabs verified' : `❌ Missing ${missingTabs.length} tabs: \`${missingTabs.join(', ')}\``}`,
         `**Spreadsheet ID:** \`${doctorRes.spreadsheetId || 'N/A'}\``
