@@ -162,8 +162,12 @@ module.exports = {
     const lifetimeRankStr = lifetimeRankIndex >= 0 ? `#${lifetimeRankIndex + 1} of ${lifetimeStandings.length}` : "Unranked";
 
     // ── 3. Live Job Tracker Sheet Scrape (Weekly + Total Apps) ──
-    // ── Student Attendance Start Date (from Attendance tab matrix) ──
-    const studentStartDate = weeklyStanding?.attendanceStartDate || lifetimeStanding?.attendanceStartDate || '2026-08-30';
+    // ── Student Attendance Start Date (strictly >= cohortStartDate) ──
+    const cohortStartDate = cohortManager.getScoringStartDate(guildId) || '2026-09-06';
+    let studentStartDate = weeklyStanding?.attendanceStartDate || lifetimeStanding?.attendanceStartDate || cohortStartDate;
+    if (studentStartDate < cohortStartDate) {
+      studentStartDate = cohortStartDate;
+    }
 
     // ── 3. Live Job Tracker Sheet Scrape (Weekly + Total Apps since attendance start date) ──
     const JobScraperService = require('../../services/jobScraperService');

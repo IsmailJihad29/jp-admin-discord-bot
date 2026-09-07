@@ -165,46 +165,39 @@ class ScoringService {
       }
     });
 
-    // Discover the cohort-wide earliest attendance date from the Attendance tab headers
-    const cohortAttDates = (attendanceRes.dates || [])
-      .map(d => DateTimeUtil.normalizeDateStr(d))
-      .filter(Boolean)
-      .sort();
-    const cohortEarliestAttDate = cohortAttDates.length > 0
-      ? cohortAttDates[0]
-      : (scoring.scoringStartDate || "2026-08-30");
+    // Cohort scoring start date (strictly enforces cutoff: e.g. 2026-09-06)
+    const cohortStartDate = cohortManager.getScoringStartDate(guildId) || scoring.scoringStartDate || "2026-09-06";
 
     // Discover individual attendance start date for each student from Attendance tab records
+    // STRICT RULE: No student's attendance start date or lifetime scoring can be earlier than cohortStartDate!
     attRows.forEach(att => {
       const student = getOrCreateStudent(att);
       if (student && !isExcludedStatus(student.status)) {
         if (att.sessions && typeof att.sessions === 'object') {
-          // Identify the earliest marked session date (non-empty mark)
+          // Identify the earliest marked session date ON OR AFTER cohortStartDate
           const markedDates = Object.entries(att.sessions)
-            .filter(([_, mark]) => mark !== undefined && mark !== null && String(mark).trim() !== '' && String(mark).trim() !== '-')
+            .filter(([d, mark]) => {
+              const normDate = DateTimeUtil.normalizeDateStr(d);
+              return normDate && normDate >= cohortStartDate && mark !== undefined && mark !== null && String(mark).trim() !== '' && String(mark).trim() !== '-';
+            })
             .map(([d]) => DateTimeUtil.normalizeDateStr(d))
-            .filter(Boolean)
             .sort();
 
           if (markedDates.length > 0) {
             student.attendanceStartDate = markedDates[0];
           } else {
-            const allDates = Object.keys(att.sessions)
-              .map(d => DateTimeUtil.normalizeDateStr(d))
-              .filter(Boolean)
-              .sort();
-            if (allDates.length > 0) {
-              student.attendanceStartDate = allDates[0];
-            }
+            student.attendanceStartDate = cohortStartDate;
           }
+        } else {
+          student.attendanceStartDate = cohortStartDate;
         }
       }
     });
 
     // Fallback for students not explicitly in Attendance tab
     studentsList.forEach(student => {
-      if (!student.attendanceStartDate) {
-        student.attendanceStartDate = cohortEarliestAttDate;
+      if (!student.attendanceStartDate || student.attendanceStartDate < cohortStartDate) {
+        student.attendanceStartDate = cohortStartDate;
       }
     });
 
@@ -212,7 +205,7 @@ class ScoringService {
     attRows.forEach(att => {
       const student = getOrCreateStudent(att);
       if (student && !isExcludedStatus(student.status)) {
-        const studentStartDate = student.attendanceStartDate || cohortEarliestAttDate;
+        const studentStartDate = student.attendanceStartDate || cohortStartDate;
         if (att.sessions && typeof att.sessions === 'object') {
           Object.entries(att.sessions).forEach(([sessionDate, mark]) => {
             const datePart = DateTimeUtil.normalizeDateStr(sessionDate);
@@ -299,7 +292,7 @@ class ScoringService {
         return da < db ? -1 : da > db ? 1 : 0;
       });
 
-      const studentStartDate = student.attendanceStartDate || cohortEarliestAttDate;
+      const studentStartDate = student.attendanceStartDate || cohortStartDate;
       // Filter out any job entries before the student's attendance start date (if not weeklyOnly)
       const eligibleJobs = weeklyOnly
         ? sortedJobs
@@ -358,7 +351,7 @@ class ScoringService {
       const student = getOrCreateStudent(item);
       if (!student || isExcludedStatus(student.status)) return;
 
-      const studentStartDate = student.attendanceStartDate || cohortEarliestAttDate;
+      const studentStartDate = student.attendanceStartDate || cohortStartDate;
       if (weeklyOnly) {
         if (!isInCurrentWeek(normDate)) return;
       } else if (normDate && normDate < studentStartDate) {
@@ -376,7 +369,7 @@ class ScoringService {
       const student = getOrCreateStudent(task);
       if (!student || isExcludedStatus(student.status)) return;
 
-      const studentStartDate = student.attendanceStartDate || cohortEarliestAttDate;
+      const studentStartDate = student.attendanceStartDate || cohortStartDate;
       if (weeklyOnly) {
         if (!isInCurrentWeek(normDate)) return;
       } else if (normDate && normDate < studentStartDate) {
@@ -391,7 +384,7 @@ class ScoringService {
     const manualAdjs = cohort?.manualAdjustments || {};
     studentsList.forEach(student => {
       if (!student.discordId) return;
-      const studentStartDate = student.attendanceStartDate || cohortEarliestAttDate;
+      const studentStartDate = student.attendanceStartDate || cohortStartDate;
       const adjList = manualAdjs[student.discordId] || [];
       student.manualAdjustment = adjList.reduce((sum, a) => {
         const normDate = DateTimeUtil.normalizeDateStr(a.date);
