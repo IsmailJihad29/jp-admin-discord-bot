@@ -169,6 +169,9 @@ class Scheduler {
 
           // Check if any student reached 3 absences in the current week and issue alert
           await this.checkAndWarnInactiveStudents(guild);
+
+          // Automatically sync Active / Inactive roles and #resume-needed access
+          await ReferralLockoutService.enforceCohortAccessLocks(guild).catch(() => {});
         }
       } catch (err) {
         Logger.error(`Attendance scan error for guild ${guild.id}:`, err.message);

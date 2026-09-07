@@ -74,6 +74,7 @@ module.exports = {
     MENTOR: "Mentor",
     HIRED: "Hired",
     ACTIVE_STUDENT: "Active Student",
+    INACTIVE_STUDENT: "Inactive Student",
     REFERRAL_RESTRICTED: "Referral Restricted"
   }
 };

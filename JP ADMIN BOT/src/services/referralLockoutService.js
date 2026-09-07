@@ -19,9 +19,60 @@ const constants = require('../config/constants');
 
 class ReferralLockoutService {
   /**
+   * Resolves or auto-creates the Active Student role
+   */
+  static async getActiveRole(guild, autoCreate = true) {
+    let role = guild.roles.cache.find(r => r && r.name && (
+      r.name.toLowerCase() === (constants.ROLES.ACTIVE_STUDENT || 'active student').toLowerCase() ||
+      r.name.toLowerCase() === 'active' ||
+      r.name.toLowerCase() === 'active students'
+    ));
+
+    if (!role && autoCreate) {
+      role = await guild.roles.create({
+        name: constants.ROLES.ACTIVE_STUDENT || 'Active Student',
+        color: '#10B981',
+        mentionable: true,
+        reason: 'Auto-created by JP ADMIN for Active Students'
+      }).catch(err => {
+        Logger.error('Failed to create Active Student role:', err.message);
+        return null;
+      });
+    }
+
+    return role;
+  }
+
+  /**
+   * Resolves or auto-creates the Inactive Student role
+   */
+  static async getInactiveRole(guild, autoCreate = true) {
+    let role = guild.roles.cache.find(r => r && r.name && (
+      r.name.toLowerCase() === (constants.ROLES.INACTIVE_STUDENT || 'inactive student').toLowerCase() ||
+      r.name.toLowerCase() === 'inactive' ||
+      r.name.toLowerCase() === 'inactive students'
+    ));
+
+    if (!role && autoCreate) {
+      role = await guild.roles.create({
+        name: constants.ROLES.INACTIVE_STUDENT || 'Inactive Student',
+        color: '#EF4444',
+        mentionable: false,
+        reason: 'Auto-created by JP ADMIN for Inactive Students'
+      }).catch(err => {
+        Logger.error('Failed to create Inactive Student role:', err.message);
+        return null;
+      });
+    }
+
+    return role;
+  }
+
+  /**
    * Evaluates all active students based on:
-   * - Total Score (restricted if < 0) strictly from their individual attendance start date
-   * - Consecutive Absences (restricted if >= 3 consecutive days) strictly from their start date
+   * - Total Score (inactive if < 0) strictly from their individual attendance start date
+   * - Consecutive Absences (inactive if >= 3 consecutive days)
+   * - Weekly Absences (inactive if >= 3 days in current week)
    */
   static async evaluateCohortPerformance(guildId) {
     const cohortManager = require('../config/cohortManager');
@@ -92,21 +143,21 @@ class ReferralLockoutService {
         });
       }
 
-      // ── STRICT LOCKOUT RULES ──
+      // ── STRICT LOCKOUT / INACTIVE RULES ──
       // 1. Negative points (< 0, e.g. -1 or lower)
       // 2. 3 consecutive days absent (consecutiveAbsences >= 3)
+      // 3. 3 days absent in recent week (totalAbsencesInWeek >= 3)
       const hasNegativeScore = totalPoints < 0;
       const has3ConsecutiveAbsences = consecutiveAbsences >= 3;
-      const isLocked = hasNegativeScore || has3ConsecutiveAbsences;
+      const has3WeeklyAbsences = totalAbsencesInWeek >= 3;
+      const isLocked = hasNegativeScore || has3ConsecutiveAbsences || has3WeeklyAbsences;
 
-      let lockReason = "";
-      if (hasNegativeScore && has3ConsecutiveAbsences) {
-        lockReason = `Negative score (${totalPoints} pts) & ${consecutiveAbsences} consecutive days absent`;
-      } else if (hasNegativeScore) {
-        lockReason = `Negative total score (${totalPoints} pts)`;
-      } else if (has3ConsecutiveAbsences) {
-        lockReason = `${consecutiveAbsences} consecutive days absent`;
-      }
+      const reasons = [];
+      if (hasNegativeScore) reasons.push(`Negative points (${totalPoints} pts)`);
+      if (has3ConsecutiveAbsences) reasons.push(`${consecutiveAbsences} consecutive days absent`);
+      else if (has3WeeklyAbsences) reasons.push(`${totalAbsencesInWeek} days absent this week`);
+
+      const lockReason = reasons.join(' & ') || 'Score/attendance threshold met';
 
       evaluatedStudents.push({
         discordId,
@@ -119,7 +170,8 @@ class ReferralLockoutService {
         totalPoints,
         hasNegativeScore,
         has3ConsecutiveAbsences,
-        hasExcessiveAbsences: consecutiveAbsences >= 3 || totalAbsencesInWeek > 3,
+        has3WeeklyAbsences,
+        hasExcessiveAbsences: consecutiveAbsences >= 3 || totalAbsencesInWeek >= 3,
         lockReason,
         isLocked
       });
@@ -129,15 +181,43 @@ class ReferralLockoutService {
   }
 
   /**
-   * Ensures #resume-needed channel is open to @everyone and @Active Student by default
+   * Ensures #resume-needed channel permissions:
+   * - Purges all member-specific overwrites (so no member is blocked individually)
+   * - Grants view/send to @Active Student, @Mentor, @Supervisor
+   * - Denies view to @Inactive Student and @everyone
    */
   static async ensureRestrictionRoleAndPermissions(guild) {
     const resumeChannel = ChannelHelper.findChannel(guild, 'RESUME_REFERRAL');
     if (!resumeChannel) return null;
 
-    // 1. Give access to @everyone
+    // 1. Resolve / Create roles
+    const activeRole = await this.getActiveRole(guild, true);
+    const inactiveRole = await this.getInactiveRole(guild, true);
+    const mentorRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.MENTOR || 'mentor').toLowerCase());
+    const supervisorRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.SUPERVISOR || 'supervisor').toLowerCase());
+    const legacyRestrictedRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
+
+    // 2. PURGE ALL INDIVIDUAL MEMBER OVERWRITES on #resume-needed
+    // This fixes the bug where students with positive points had lingering member overwrites blocking access!
+    try {
+      const memberOverwrites = resumeChannel.permissionOverwrites.cache.filter(o => o.type === 1 || o.type === 'member');
+      for (const [id, overwrite] of memberOverwrites) {
+        await resumeChannel.permissionOverwrites.delete(id).catch(() => {});
+      }
+    } catch (err) {
+      Logger.warn(`Could not purge member overwrites from ${resumeChannel.name}:`, err.message);
+    }
+
+    // 3. Deny @everyone from viewing #resume-needed
     if (guild.roles.everyone) {
       await resumeChannel.permissionOverwrites.edit(guild.roles.everyone, {
+        ViewChannel: false
+      }).catch(() => {});
+    }
+
+    // 4. Grant full access to Active Student role
+    if (activeRole) {
+      await resumeChannel.permissionOverwrites.edit(activeRole, {
         ViewChannel: true,
         ReadMessageHistory: true,
         SendMessages: true,
@@ -146,24 +226,25 @@ class ReferralLockoutService {
       }).catch(() => {});
     }
 
-    // 2. Explicitly grant access to Active Student role (handles private category setups)
-    const studentRole = guild.roles.cache.find(r => r && r.name && (
-      r.name.toLowerCase() === (constants.ROLES.ACTIVE_STUDENT || 'active student').toLowerCase() ||
-      r.name.toLowerCase() === 'student' ||
-      r.name.toLowerCase() === 'students'
-    ));
-    if (studentRole) {
-      await resumeChannel.permissionOverwrites.edit(studentRole, {
-        ViewChannel: true,
-        ReadMessageHistory: true,
-        SendMessages: true,
-        AttachFiles: true,
-        EmbedLinks: true
+    // 5. Explicitly deny Inactive Student role
+    if (inactiveRole) {
+      await resumeChannel.permissionOverwrites.edit(inactiveRole, {
+        ViewChannel: false,
+        SendMessages: false,
+        ReadMessageHistory: false
       }).catch(() => {});
     }
 
-    // 3. Ensure Mentors & Supervisors have full access
-    const mentorRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.MENTOR || 'mentor').toLowerCase());
+    // 6. Deny legacy Referral Restricted role if exists
+    if (legacyRestrictedRole && legacyRestrictedRole.id !== inactiveRole?.id) {
+      await resumeChannel.permissionOverwrites.edit(legacyRestrictedRole, {
+        ViewChannel: false,
+        SendMessages: false,
+        ReadMessageHistory: false
+      }).catch(() => {});
+    }
+
+    // 7. Grant full access to Mentors & Supervisors
     if (mentorRole) {
       await resumeChannel.permissionOverwrites.edit(mentorRole, {
         ViewChannel: true,
@@ -173,7 +254,6 @@ class ReferralLockoutService {
         EmbedLinks: true
       }).catch(() => {});
     }
-    const supervisorRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.SUPERVISOR || 'supervisor').toLowerCase());
     if (supervisorRole) {
       await resumeChannel.permissionOverwrites.edit(supervisorRole, {
         ViewChannel: true,
@@ -184,28 +264,21 @@ class ReferralLockoutService {
       }).catch(() => {});
     }
 
-    // 4. Deny access to Referral Restricted role
-    let restrictionRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
-    if (restrictionRole) {
-      await resumeChannel.permissionOverwrites.edit(restrictionRole, {
-        ViewChannel: false,
-        SendMessages: false,
-        ReadMessageHistory: false
-      }).catch(() => {});
-    }
-
-    return restrictionRole;
+    return { activeRole, inactiveRole, resumeChannel };
   }
 
   /**
-   * Enforces locks using direct member overwrites & role:
-   * - Locked students get ViewChannel: false specifically
-   * - Regular students have full access through @everyone / @Active Student
+   * Enforces role locks across the server:
+   * - Inactive students (<0 points OR >=3 absences) get @Inactive Student (Active Student removed)
+   * - Active students (>=0 points AND <3 absences) get @Active Student (Inactive Student removed)
+   * - Clears member-specific overwrites from #resume-needed
    */
   static async enforceCohortAccessLocks(guild) {
     await this.ensureRestrictionRoleAndPermissions(guild);
-    const resumeChannel = ChannelHelper.findChannel(guild, 'RESUME_REFERRAL');
-    const restrictionRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
+
+    const activeRole = await this.getActiveRole(guild, true);
+    const inactiveRole = await this.getInactiveRole(guild, true);
+    const legacyRestrictedRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
     const cohortManager = require('../config/cohortManager');
 
     // Fetch members to ensure full cache
@@ -223,58 +296,81 @@ class ReferralLockoutService {
 
         // Skip mentors & supervisors completely
         if (cohortManager.isStaff(guild.id, member)) {
-          if (resumeChannel) {
-            await resumeChannel.permissionOverwrites.delete(member.id).catch(() => {});
+          if (inactiveRole && member.roles.cache.has(inactiveRole.id)) {
+            await member.roles.remove(inactiveRole).catch(() => {});
           }
-          if (restrictionRole && member.roles.cache.has(restrictionRole.id)) {
-            await member.roles.remove(restrictionRole).catch(() => {});
+          if (legacyRestrictedRole && member.roles.cache.has(legacyRestrictedRole.id)) {
+            await member.roles.remove(legacyRestrictedRole).catch(() => {});
           }
           continue;
         }
 
         if (s.isLocked) {
-          // ── LOCK STUDENT ──
-          if (resumeChannel) {
-            await resumeChannel.permissionOverwrites.edit(member.id, {
-              ViewChannel: false,
-              SendMessages: false,
-              ReadMessageHistory: false
-            }).catch(() => {});
-          }
-          if (restrictionRole && !member.roles.cache.has(restrictionRole.id)) {
-            await member.roles.add(restrictionRole).catch(() => {});
+          // ── ASSIGN INACTIVE STUDENT ROLE (Score < 0 or >=3 absences) ──
+          let changed = false;
+
+          if (activeRole && member.roles.cache.has(activeRole.id)) {
+            await member.roles.remove(activeRole).catch(() => {});
+            changed = true;
           }
 
-          // Send DM alert to student
-          const dmEmbed = Embeds.warning(
-            "🔒 Resume Needed Access Restricted",
-            `Hello **${s.name}**, your access to the **#resume-needed** referral channel has been temporarily locked.\n\n` +
-            `🚫 **Reason:** ${s.lockReason}\n` +
-            `• ⭐ **Current Score:** **${s.totalPoints} pts**\n` +
-            `• 📅 **Consecutive Absences:** **${s.consecutiveAbsences} days in a row**\n\n` +
-            `💡 **How to restore access:**\n` +
-            `1. Make sure your score is positive (\`>= 0 pts\`) by submitting attendance, jobs, or tasks.\n` +
-            `2. Break your absence streak by attending classes regularly.\n` +
-            `*Once your score is 0+ and you are regular, your referral channel will automatically reopen!*`,
-            `JP ADMIN ${constants.BOT_VERSION} · Referral Access System`
-          );
-          await member.send({ embeds: [dmEmbed] }).catch(() => {});
+          if (inactiveRole && !member.roles.cache.has(inactiveRole.id)) {
+            await member.roles.add(inactiveRole).catch(() => {});
+            changed = true;
+
+            // Send DM alert to newly locked student
+            const dmEmbed = Embeds.warning(
+              "🔒 Resume Needed Access Restricted",
+              `Hello **${s.name}**, your access to the **#resume-needed** referral channel has been temporarily paused.\n\n` +
+              `🚫 **Reason:** ${s.lockReason}\n` +
+              `• ⭐ **Current Score:** **${s.totalPoints} pts**\n` +
+              `• 📅 **Consecutive Absences:** **${s.consecutiveAbsences} days in a row**\n` +
+              `• 🗓️ **Weekly Absences:** **${s.totalAbsencesInWeek} days**\n\n` +
+              `💡 **How to restore access:**\n` +
+              `1. Submit your daily attendance regularly to break your absence streak.\n` +
+              `2. Earn points by submitting daily job tasks and daily job tracker applications.\n` +
+              `*Once your score is 0+ and you are regular, your \`Active Student\` role and #resume-needed access will automatically reopen!*`,
+              `JP ADMIN ${constants.BOT_VERSION} · Referral Access System`
+            );
+            await member.send({ embeds: [dmEmbed] }).catch(() => {});
+          }
+
+          if (legacyRestrictedRole && member.roles.cache.has(legacyRestrictedRole.id)) {
+            await member.roles.remove(legacyRestrictedRole).catch(() => {});
+          }
+
+          if (changed) {
+            await new Promise(r => setTimeout(r, 60)); // Gentle rate limit protection
+          }
 
           lockedList.push(s);
         } else {
-          // ── UNLOCK STUDENT (Score >= 0 & not 3 consecutive absences) ──
-          if (resumeChannel) {
-            // Delete member-specific deny overwrite so @everyone / @Active Student permission takes over (unlocked!)
-            await resumeChannel.permissionOverwrites.delete(member.id).catch(() => {});
+          // ── ASSIGN ACTIVE STUDENT ROLE (Score >= 0 & <3 absences) ──
+          let changed = false;
+
+          if (inactiveRole && member.roles.cache.has(inactiveRole.id)) {
+            await member.roles.remove(inactiveRole).catch(() => {});
+            changed = true;
           }
-          if (restrictionRole && member.roles.cache.has(restrictionRole.id)) {
-            await member.roles.remove(restrictionRole).catch(() => {});
+
+          if (legacyRestrictedRole && member.roles.cache.has(legacyRestrictedRole.id)) {
+            await member.roles.remove(legacyRestrictedRole).catch(() => {});
+            changed = true;
+          }
+
+          if (activeRole && !member.roles.cache.has(activeRole.id)) {
+            await member.roles.add(activeRole).catch(() => {});
+            changed = true;
+          }
+
+          if (changed) {
+            await new Promise(r => setTimeout(r, 60));
           }
 
           unlockedList.push(s);
         }
       } catch (err) {
-        Logger.warn(`Error enforcing lockout for student ${s.discordId}:`, err.message);
+        Logger.warn(`Error enforcing roles for student ${s.discordId}:`, err.message);
       }
     }
 
@@ -283,42 +379,80 @@ class ReferralLockoutService {
       lockedCount: lockedList.length,
       unlockedCount: unlockedList.length,
       lockedStudents: lockedList,
-      unlockedStudents: unlockedList
+      unlockedStudents: unlockedList,
+      activeRoleName: activeRole?.name || 'Active Student',
+      inactiveRoleName: inactiveRole?.name || 'Inactive Student'
     };
   }
 
   /**
-   * Force removes all restrictions and resets #resume-needed to open for everyone
+   * Force removes all inactive restrictions, resets #resume-needed permissions,
+   * and gives @Active Student to all eligible students
    */
   static async unlockAll(guild) {
     const resumeChannel = ChannelHelper.findChannel(guild, 'RESUME_REFERRAL');
     await this.ensureRestrictionRoleAndPermissions(guild);
 
+    const activeRole = await this.getActiveRole(guild, true);
+    const inactiveRole = await this.getInactiveRole(guild, true);
+    const legacyRestrictedRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
+
     let clearedOverwrites = 0;
-    let clearedRoles = 0;
+    let rolesRemoved = 0;
+    let activeAssigned = 0;
 
     if (resumeChannel) {
-      // Clear all member-specific deny overwrites from the channel
-      for (const overwrite of resumeChannel.permissionOverwrites.cache.values()) {
-        if (overwrite.type === 1) { // 1 = Member overwrite
-          await resumeChannel.permissionOverwrites.delete(overwrite.id).catch(() => {});
+      // Clear all member-specific overwrites from the channel
+      for (const [id, overwrite] of resumeChannel.permissionOverwrites.cache) {
+        if (overwrite.type === 1 || overwrite.type === 'member') {
+          await resumeChannel.permissionOverwrites.delete(id).catch(() => {});
           clearedOverwrites++;
         }
       }
     }
 
-    // Fetch all members from Discord API to guarantee finding everyone with restriction role
+    // Fetch all members from Discord API
     await guild.members.fetch().catch(() => {});
 
-    const restrictionRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
-    if (restrictionRole) {
-      for (const member of restrictionRole.members.values()) {
-        await member.roles.remove(restrictionRole).catch(() => {});
-        clearedRoles++;
+    // Remove Inactive & Legacy Restricted roles from everyone
+    if (inactiveRole) {
+      for (const member of inactiveRole.members.values()) {
+        await member.roles.remove(inactiveRole).catch(() => {});
+        rolesRemoved++;
+        await new Promise(r => setTimeout(r, 40));
       }
     }
 
-    return { unlocked: clearedOverwrites, rolesRemoved: clearedRoles };
+    if (legacyRestrictedRole) {
+      for (const member of legacyRestrictedRole.members.values()) {
+        await member.roles.remove(legacyRestrictedRole).catch(() => {});
+        rolesRemoved++;
+        await new Promise(r => setTimeout(r, 40));
+      }
+    }
+
+    // Assign Active role to all active students in roster
+    const cohortManager = require('../config/cohortManager');
+    const rosterRes = await GasClient.getRoster(guild.id).catch(() => ({ students: [] }));
+    const activeRoster = (rosterRes.students || []).filter(s => s.status === 'active');
+
+    for (const student of activeRoster) {
+      if (!student.discordId) continue;
+      const member = guild.members.cache.get(student.discordId);
+      if (member && !cohortManager.isStaff(guild.id, member) && activeRole && !member.roles.cache.has(activeRole.id)) {
+        await member.roles.add(activeRole).catch(() => {});
+        activeAssigned++;
+        await new Promise(r => setTimeout(r, 40));
+      }
+    }
+
+    return {
+      unlocked: clearedOverwrites,
+      rolesRemoved,
+      activeAssigned,
+      activeRoleName: activeRole?.name || 'Active Student',
+      inactiveRoleName: inactiveRole?.name || 'Inactive Student'
+    };
   }
 }
 

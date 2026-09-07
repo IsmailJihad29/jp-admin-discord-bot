@@ -153,13 +153,13 @@ module.exports = {
     const progressMsg = await message.reply("🔍 **Scanning server channels, categories, and roles...**");
 
     try {
-      // 1. Ensure the 5 Essential Roles Exist
+      // 1. Ensure the Essential Roles Exist
       const rolesConfig = [
         { name: constants.ROLES.SUPERVISOR || "Supervisor", color: '#3B82F6', mentionable: true },
         { name: constants.ROLES.MENTOR || "Mentor", color: '#8B5CF6', mentionable: true },
-        { name: constants.ROLES.ACTIVE_STUDENT || "Active Student", color: '#64748B', mentionable: true },
-        { name: constants.ROLES.REFERRAL_RESTRICTED || "Referral Restricted", color: '#EF4444', mentionable: false },
-        { name: constants.ROLES.HIRED || "Hired", color: '#10B981', mentionable: true }
+        { name: constants.ROLES.ACTIVE_STUDENT || "Active Student", color: '#10B981', mentionable: true },
+        { name: constants.ROLES.INACTIVE_STUDENT || "Inactive Student", color: '#EF4444', mentionable: false },
+        { name: constants.ROLES.HIRED || "Hired", color: '#34D399', mentionable: true }
       ];
 
       const verifiedRoles = [];
@@ -187,8 +187,14 @@ module.exports = {
       const mentorRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.MENTOR || 'mentor').toLowerCase());
       const supervisorRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.SUPERVISOR || 'supervisor').toLowerCase());
       const restrictionRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
-
-      const studentRole = guild.roles.cache.find(r => r && r.name && r.name.toLowerCase() === (constants.ROLES.ACTIVE_STUDENT || 'active student').toLowerCase());
+      const studentRole = guild.roles.cache.find(r => r && r.name && (
+        r.name.toLowerCase() === (constants.ROLES.ACTIVE_STUDENT || 'active student').toLowerCase() ||
+        r.name.toLowerCase() === 'active'
+      ));
+      const inactiveRole = guild.roles.cache.find(r => r && r.name && (
+        r.name.toLowerCase() === (constants.ROLES.INACTIVE_STUDENT || 'inactive student').toLowerCase() ||
+        r.name.toLowerCase() === 'inactive'
+      ));
 
       // 2. Discover Categories
       const categoriesMap = new Map();
@@ -230,7 +236,13 @@ module.exports = {
               deny: [PermissionFlagsBits.ViewChannel]
             });
           }
-          if (restrictionRole) {
+          if (inactiveRole) {
+            overwrites.push({
+              id: inactiveRole.id,
+              deny: [PermissionFlagsBits.ViewChannel]
+            });
+          }
+          if (restrictionRole && restrictionRole.id !== inactiveRole?.id) {
             overwrites.push({
               id: restrictionRole.id,
               deny: [PermissionFlagsBits.ViewChannel]
@@ -249,10 +261,11 @@ module.exports = {
             });
           }
         } else if (chDef.key === 'RESUME_REFERRAL') {
-          // Referral Drive — Open to @everyone and @Active Student by default, locked only for negative points (<0) or 3 consecutive absences
+          // Referral Drive — Visible ONLY to Active Students, Mentors & Supervisors
+          // Denied to Inactive Students and @everyone
           overwrites.push({
             id: guild.roles.everyone.id,
-            allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks]
+            deny: [PermissionFlagsBits.ViewChannel]
           });
           if (studentRole) {
             overwrites.push({
@@ -260,7 +273,13 @@ module.exports = {
               allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks]
             });
           }
-          if (restrictionRole) {
+          if (inactiveRole) {
+            overwrites.push({
+              id: inactiveRole.id,
+              deny: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+            });
+          }
+          if (restrictionRole && restrictionRole.id !== inactiveRole?.id) {
             overwrites.push({
               id: restrictionRole.id,
               deny: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
@@ -333,6 +352,15 @@ module.exports = {
 
         if (found) {
           existingChannels.push(`• 🟢 <#${found.id}> ➔ \`${chDef.key}\``);
+
+          // If resume referral channel, clear all individual member overwrites
+          if (chDef.key === 'RESUME_REFERRAL') {
+            for (const [id, ow] of found.permissionOverwrites.cache) {
+              if (ow.type === 1 || ow.type === 'member') {
+                await found.permissionOverwrites.delete(id).catch(() => {});
+              }
+            }
+          }
 
           // Update permission overwrites on existing channels to ensure role policies
           const overwrites = buildPermissionOverwrites(chDef);
