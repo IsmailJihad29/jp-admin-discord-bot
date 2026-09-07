@@ -287,120 +287,52 @@ class MessageHandler {
   }
 
   /**
-   * Handles direct message posts in #leave-request
-   * Automatically defaults to the post's date (today) if no date is specified by student!
+   * Handles non-command message posts in #leave-request
+   * Unformatted or plain text messages are NOT counted as leaves.
+   * Prompts the student with the required format and provides a one-click form button.
    */
   static async handleLeavePost(message) {
     try {
       const studentId = message.author.id;
-      const studentName = message.author.displayName || message.author.username;
-      const todayStr = DateTimeUtil.getTodayDateStr();
+      const cohortManager = require('../config/cohortManager');
 
-      // Check if message contains YYYY-MM-DD dates
-      const dateMatches = message.content.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [];
-      let start = todayStr;
-      let end = todayStr;
-
-      if (dateMatches.length >= 2) {
-        start = dateMatches[0];
-        end = dateMatches[1];
-      } else if (dateMatches.length === 1) {
-        start = dateMatches[0];
-        end = dateMatches[0];
+      // Mentors and Supervisors can chat/post in leave channel without triggering format warnings
+      if (cohortManager.isMentor(message.guild.id, message.member)) {
+        return;
       }
 
-      // Check if student already has an approved or pending leave for these dates
-      const existingRes = await GasClient.getLeaves(message.guild.id).catch(() => ({ leaves: [] }));
-      const existingList = existingRes.leaves || [];
-      const match = existingList.find(l => 
-        l.discordId === studentId && 
-        ((start >= l.startDate && start <= l.endDate) || (l.startDate >= start && l.startDate <= end))
+      message.react('⚠️').catch(() => {});
+
+      const warningEmbed = Embeds.warning(
+        "⚠️ Leave Request Format Required",
+        `Hello <@${studentId}>, messages in this channel are **not automatically counted** as leave requests.\n\n` +
+        `If you need to request an excused absence, you must use the **\`!leave\`** command or click the button below to open the form:\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📋 **Required Format Options:**\n\n` +
+        `• **1. Leave for Today:**\n` +
+        `  \`!leave <Reason>\`\n` +
+        `  *Example:* \`!leave Severe fever and doctor appointment\`\n\n` +
+        `• **2. Specific Single Date:**\n` +
+        `  \`!leave YYYY-MM-DD <Reason>\`\n` +
+        `  *Example:* \`!leave 2026-09-10 University semester final exam\`\n\n` +
+        `• **3. Date Range (Multiple Days):**\n` +
+        `  \`!leave YYYY-MM-DD YYYY-MM-DD <Reason>\`\n` +
+        `  *Example:* \`!leave 2026-09-10 2026-09-12 Family emergency\`\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `💡 *Or click below to open the interactive form directly:*`
       );
 
-      if (match) {
-        const status = String(match.status || "").toUpperCase();
-        if (status === 'APPROVED') {
-          message.react('✅').catch(() => {});
-          return message.reply({
-            embeds: [Embeds.success(
-              "Leave Already Approved! ✅",
-              `Hello <@${studentId}>, your leave request (**\`${match.requestId}\`**) for **\`${match.startDate}\` to \`${match.endDate}\`** is **ALREADY APPROVED**.\n\n` +
-              `• 📝 **Reason on Record:** ${match.reason}\n` +
-              `• ⭐ **Attendance Status:** Excused (\`L\`) with 0 absence penalty.`
-            )]
-          }).catch(() => {});
-        } else if (status === 'PENDING') {
-          message.react('⏳').catch(() => {});
-          return message.reply({
-            embeds: [Embeds.info(
-              "Leave Request Already In Review ⏳",
-              `Hello <@${studentId}>, your leave request (**\`${match.requestId}\`**) for **\`${match.startDate}\` to \`${match.endDate}\`** is already in review by mentors.\n\n` +
-              `🔔 *You will receive a notification as soon as it is decided!*`
-            )]
-          }).catch(() => {});
-        }
-      }
-
-      const res = await GasClient.submitLeave(message.guild.id, {
-        discordId: studentId,
-        name: studentName,
-        startDate: start,
-        endDate: end,
-        reason: message.content.substring(0, 300)
-      });
-
-      if (res && res.duplicate) {
-        message.react('⏳').catch(() => {});
-        const dupEmbed = Embeds.info(
-          "Leave Request Already on Record ⏳",
-          `Hello <@${studentId}>, you **already have an active leave request** (\`${res.requestId}\`) covering these dates.\n\n` +
-          `• 🆔 **Request ID:** \`${res.requestId}\`\n` +
-          `• 📅 **Status:** \`${res.existingStatus || 'PENDING'}\`\n\n` +
-          `🔔 *You will receive a notification as soon as mentors review it.*`
-        );
-        return message.reply({ embeds: [dupEmbed] }).catch(() => {});
-      }
-
-      message.react('📝').catch(() => {});
-
-      const studentEmbed = Embeds.info(
-        "Leave Request Under Review ⏳",
-        `Hello <@${studentId}>, **your leave request is under review.**\n\n` +
-        `• 🆔 **Request ID:** \`${res.requestId}\`\n` +
-        `• 📅 **Requested Dates:** \`${start}\` ${start !== end ? `to \`${end}\`` : '(Today)'}\n` +
-        `• 📝 **Reason:** ${message.content.substring(0, 200)}\n\n` +
-        `🔔 **You will be notified when your leave is approved by mentors.**`
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`open_leave_modal_${studentId}`)
+          .setLabel('📝 Open Leave Request Form')
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('📋')
       );
 
-      await message.reply({ embeds: [studentEmbed] }).catch(() => {});
-
-      // Forward to Mentor/Admin channel for immediate review
-      const mentorChannel = ChannelHelper.findChannel(message.guild, 'BOT_ADMIN');
-      if (mentorChannel && mentorChannel.id !== message.channel.id) {
-        const mentorEmbed = Embeds.warning(
-          `📋 New Leave Request for Review (${res.requestId})`,
-          `• **Student:** <@${studentId}> (${studentName})\n` +
-          `• **Dates:** \`${start}\` to \`${end}\`\n` +
-          `• **Reason:** ${message.content.substring(0, 300)}\n` +
-          `• **Submitted:** ${DateTimeUtil.getFullTimestamp()}\n\n` +
-          `*Review and click below to decide:*`
-        );
-
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`leave_approve_${res.requestId}_${studentId}_${start}_${end}_${message.id}`)
-            .setLabel('✅ Approve Leave')
-            .setStyle(ButtonStyle.Success),
-          new ButtonBuilder()
-            .setCustomId(`leave_reject_${res.requestId}_${studentId}_${start}_${end}_${message.id}`)
-            .setLabel('❌ Reject Leave')
-            .setStyle(ButtonStyle.Danger)
-        );
-
-        await mentorChannel.send({ embeds: [mentorEmbed], components: [row] }).catch(() => {});
-      }
+      return message.reply({ embeds: [warningEmbed], components: [row] }).catch(() => {});
     } catch (e) {
-      Logger.error("Error handling leave post in channel:", e.message);
+      Logger.error("Error handling leave post warning in channel:", e.message);
     }
   }
 }

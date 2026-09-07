@@ -40,30 +40,25 @@ class ScoringService {
     const scoring = cohortManager.getCohortScoring(guildId);
     const cohortTarget = scoring.jobTarget || constants.SCORING.DEFAULT_JOB_TARGET;
 
-    // Fetch data from Apps Script backend for the core components
-    const [rosterRes, jobsRes, interviewsRes, tasksRes, attendanceRes] = await Promise.all([
-      GasClient.getRoster(guildId).catch(() => ({ students: [] })),
-      GasClient.getJobsDaily(guildId, 7).catch(() => ({ jobs: [] })),    // 7 days covers the current Sun-Thu week
-      GasClient.getInterviews(guildId, 90).catch(() => ({ interviews: [] })),
-      GasClient.getJobTasks(guildId).catch(() => ({ tasks: [] })),
-      GasClient.getAttendance(guildId).catch(() => ({ attendance: [] }))
-    ]);
+    // Fetch data from Apps Script backend for the core components (or use cachedData if provided)
+    let rosterRes, jobsRes, interviewsRes, tasksRes, attendanceRes;
+    if (options.cachedData) {
+      rosterRes = options.cachedData.rosterRes;
+      jobsRes = options.cachedData.jobsRes;
+      interviewsRes = options.cachedData.interviewsRes;
+      tasksRes = options.cachedData.tasksRes;
+      attendanceRes = options.cachedData.attendanceRes;
+    } else {
+      [rosterRes, jobsRes, interviewsRes, tasksRes, attendanceRes] = await Promise.all([
+        GasClient.getRoster(guildId).catch(() => ({ students: [] })),
+        GasClient.getJobsDaily(guildId, weeklyOnly ? 7 : 90).catch(() => ({ jobs: [] })),
+        GasClient.getInterviews(guildId, 90).catch(() => ({ interviews: [] })),
+        GasClient.getJobTasks(guildId).catch(() => ({ tasks: [] })),
+        GasClient.getAttendance(guildId).catch(() => ({ rows: [] }))
+      ]);
+    }
 
-    // Compute current week window: Sunday (start) → Thursday (end) in Asia/Dhaka
-    // Luxon weekday: Mon=1 ... Sat=6, Sun=7
-    const { DateTime } = require('luxon');
-    const nowDhaka = DateTime.now().setZone('Asia/Dhaka');
-    const todayWeekday = nowDhaka.weekday; // 7 = Sunday, 1-4 = Mon-Thu, 5=Fri, 6=Sat
-    // Days since last Sunday: Sun=0, Mon=1, Tue=2, Wed=3, Thu=4, Fri=5, Sat=6
-    const daysSinceSunday = todayWeekday === 7 ? 0 : todayWeekday; // Sun=0, Mon=1...
-    const weekSunday = nowDhaka.minus({ days: daysSinceSunday }).toFormat('yyyy-MM-dd');
-    const weekThursday = nowDhaka.minus({ days: daysSinceSunday }).plus({ days: 4 }).toFormat('yyyy-MM-dd');
-    // Helper to verify if a date falls strictly within current week [weekSunday, weekThursday]
-    const isInCurrentWeek = (dateStr) => {
-      if (!dateStr) return false;
-      const d = String(dateStr).substring(0, 10);
-      return d >= weekSunday && d <= weekThursday;
-    };
+    const isInCurrentWeek = (dateStr) => DateTimeUtil.isInCurrentWeek(dateStr);
 
     const isExcludedStatus = (st) => {
       const clean = String(st || "").toLowerCase().trim();
@@ -178,7 +173,9 @@ class ScoringService {
       if (student && !isExcludedStatus(student.status)) {
         if (att.sessions && typeof att.sessions === 'object') {
           Object.entries(att.sessions).forEach(([sessionDate, mark]) => {
-            const datePart = sessionDate.substring(0, 10);
+            const datePart = DateTimeUtil.normalizeDateStr(sessionDate);
+            if (!datePart) return;
+
             // Strict Sunday-Thursday weekly filter
             if (weeklyOnly) {
               if (!isInCurrentWeek(datePart)) return;
@@ -214,11 +211,17 @@ class ScoringService {
       }
     });
 
-    // 4. Process Job Application Tiered Scoring & Streaks — current week ONLY (Sun–Thu)
+    // 4. Process Job Application Tiered Scoring & Streaks
     const jobsByStudent = new Map();
     (jobsRes.jobs || []).forEach(j => {
-      // Only count jobs within the current week (Sunday to Thursday)
-      if (!isInCurrentWeek(j.date)) return;
+      const normDate = DateTimeUtil.normalizeDateStr(j.date);
+      // If weeklyOnly, only count jobs within current week (Sunday to Thursday)
+      if (weeklyOnly) {
+        if (!isInCurrentWeek(normDate)) return;
+      } else if (normDate && normDate < scoringStartDate) {
+        return;
+      }
+
       const targetStudent = getOrCreateStudent(j);
       if (!targetStudent || isExcludedStatus(targetStudent.status)) return;
 
@@ -226,7 +229,7 @@ class ScoringService {
       if (!jobsByStudent.has(key)) {
         jobsByStudent.set(key, []);
       }
-      jobsByStudent.get(key).push(j);
+      jobsByStudent.get(key).push({ ...j, normDate });
     });
 
     studentsList.forEach(student => {
@@ -236,8 +239,8 @@ class ScoringService {
 
       // Sort jobs by date ascending to detect consecutive days properly
       const sortedJobs = [...studentJobs].sort((a, b) => {
-        const da = String(a.date || '').substring(0, 10);
-        const db = String(b.date || '').substring(0, 10);
+        const da = a.normDate || '';
+        const db = b.normDate || '';
         return da < db ? -1 : da > db ? 1 : 0;
       });
 
@@ -255,9 +258,8 @@ class ScoringService {
         // Track consecutive days where target was hit
         if (count >= cohortTarget) {
           if (prevDate) {
-            // Check if this date is exactly 1 day after prevDate
             const prev = new Date(prevDate);
-            const curr = new Date(String(jobDay.date || '').substring(0, 10));
+            const curr = new Date(jobDay.normDate || prevDate);
             const diffDays = Math.round((curr - prev) / (1000 * 60 * 60 * 24));
             if (diffDays === 1) {
               currentStreak++;
@@ -267,7 +269,7 @@ class ScoringService {
           } else {
             currentStreak = 1;
           }
-          prevDate = String(jobDay.date || '').substring(0, 10);
+          prevDate = jobDay.normDate;
           if (currentStreak > maxStreak) maxStreak = currentStreak;
         } else {
           currentStreak = 0; // missed target — streak breaks
@@ -279,7 +281,7 @@ class ScoringService {
       student.streakBonus = Math.min(maxStreak * scoring.streakBonusPerDay, scoring.streakCap);
     });
 
-    // 5. Process Interview Points (+1 pt) — filtered by current week if weeklyOnly
+    // 5. Process Interview Points (+1 pt)
     (interviewsRes.interviews || []).forEach(item => {
       const itemStatus = String(item.status || '').toUpperCase();
       const companyName = String(item.company || '').toUpperCase();
@@ -287,9 +289,10 @@ class ScoringService {
       if (itemStatus === 'VOIDED' || companyName.startsWith('[VOIDED]')) return;
 
       const itemDate = item.interviewDate || item.date || item.loggedDate;
+      const normDate = DateTimeUtil.normalizeDateStr(itemDate);
       if (weeklyOnly) {
-        if (!isInCurrentWeek(itemDate)) return;
-      } else if (itemDate && String(itemDate).substring(0, 10) < scoringStartDate) {
+        if (!isInCurrentWeek(normDate)) return;
+      } else if (normDate && normDate < scoringStartDate) {
         return;
       }
 
@@ -300,12 +303,13 @@ class ScoringService {
       }
     });
 
-    // 6. Process Job Task Points — filtered by current week if weeklyOnly
+    // 6. Process Job Task Points
     (tasksRes.tasks || []).forEach(task => {
       const taskDate = task.submittedAt || task.timestamp || task.createdAt;
+      const normDate = DateTimeUtil.normalizeDateStr(taskDate);
       if (weeklyOnly) {
-        if (!isInCurrentWeek(taskDate)) return;
-      } else if (task.createdAt && task.createdAt < scoringStartDate) {
+        if (!isInCurrentWeek(normDate)) return;
+      } else if (normDate && normDate < scoringStartDate) {
         return;
       }
 
@@ -322,7 +326,9 @@ class ScoringService {
       if (!student.discordId) return;
       const adjList = manualAdjs[student.discordId] || [];
       student.manualAdjustment = adjList.reduce((sum, a) => {
-        if (weeklyOnly && a.date && !isInCurrentWeek(a.date)) return sum;
+        const normDate = DateTimeUtil.normalizeDateStr(a.date);
+        if (weeklyOnly && normDate && !isInCurrentWeek(normDate)) return sum;
+        if (!weeklyOnly && normDate && normDate < scoringStartDate) return sum;
         return sum + (Number(a.amount) || 0);
       }, 0);
     });

@@ -35,13 +35,11 @@ module.exports = {
 
       const panelEmbed = Embeds.info(
         "🩺 Student Health & Performance Check Center",
-        "Welcome to your personal performance diagnosis center! Here you can check your real-time mentorship health, total points, job application count, and referral eligibility.\n\n" +
+        "Welcome to your personal performance diagnosis center! Here you can check your dual real-time mentorship health: this week's velocity and your overall lifetime career standings.\n\n" +
         "📊 **What you'll see in your health report:**\n" +
-        "• 📅 **Attendance Score:** Present (+1 pt) & Absent (-1 pt) sessions\n" +
-        "• 💼 **Job Tracking Velocity:** 7-day job applications & daily streaks\n" +
-        "• 🎯 **Interviews Logged:** Scheduled interview points (+5 pts each)\n" +
-        "• 🛠️ **Job Tasks:** Completed solutions & mentor review score\n" +
-        "• 🔒 **Referral Status:** Right-To-Be-Referred (RTBR) access unlock state\n\n" +
+        "• 🏆 **This Week's Performance:** Weekly Leaderboard rank, total weekly points, jobs applied & attendance breakdown\n" +
+        "• 📈 **Lifetime Career Performance:** Lifetime Leaderboard rank, cumulative all-time points & session history\n" +
+        "• 🔒 **Referral Drive Access:** Right-To-Be-Referred (RTBR) access unlock state\n\n" +
         "👇 *Click the button below to get your private instant health scorecard:*",
         `JP ADMIN ${constants.BOT_VERSION} · Personal Health Check`
       );
@@ -80,18 +78,25 @@ module.exports = {
     const guildId = guild.id;
 
     // Fetch live data from Apps Script backend
-    const [rosterRes, attendanceRes, jobsRes, tasksRes, interviewsRes, standings] = await Promise.all([
+    const [rosterRes, attendanceRes, jobsRes, tasksRes, interviewsRes, sheetRes] = await Promise.all([
       GasClient.getRoster(guildId).catch(() => ({ students: [] })),
       GasClient.getAttendance(guildId).catch(() => ({ rows: [], dates: [] })),
-      GasClient.getJobsDaily(guildId, 7).catch(() => ({ jobs: [] })),
+      GasClient.getJobsDaily(guildId, 90).catch(() => ({ jobs: [] })),
       GasClient.getJobTasks(guildId).catch(() => ({ tasks: [] })),
-      GasClient.getInterviews(guildId, 7).catch(() => ({ interviews: [] })),
-      ScoringService.calculateRTBR(guildId).catch(() => [])
+      GasClient.getInterviews(guildId, 90).catch(() => ({ interviews: [] })),
+      GasClient.request(guildId, 'getJobSheets', {}).catch(() => ({ sheets: [] }))
+    ]);
+
+    const cachedData = { rosterRes, attendanceRes, jobsRes, tasksRes, interviewsRes };
+
+    // Calculate both Weekly and Lifetime standings
+    const [weeklyStandings, lifetimeStandings] = await Promise.all([
+      ScoringService.calculateRTBR(guildId, guild, { weeklyOnly: true, cachedData }).catch(() => []),
+      ScoringService.calculateRTBR(guildId, guild, { weeklyOnly: false, cachedData }).catch(() => [])
     ]);
 
     const cohortManager = require('../../config/cohortManager');
     const scoring = cohortManager.getCohortScoring(guildId);
-    const scoringStartDate = scoring.scoringStartDate || "2026-08-30";
     const cohortTarget = scoring.jobTarget || constants.SCORING.DEFAULT_JOB_TARGET;
 
     const studentProfile = (rosterRes.students || []).find(s => s.discordId === discordId);
@@ -99,135 +104,158 @@ module.exports = {
     const email = studentProfile?.email || "Not linked in Bot_Map";
     const region = studentProfile?.region || "Unspecified";
 
-    // 1. Attendance Metrics (Filtered by scoringStartDate)
-    const attRow = (attendanceRes.rows || []).find(r => r.discordId === discordId);
-    let presentCount = 0;
-    let absentCount = 0;
-    let leaveCount = 0;
-    let totalSessions = 0;
-    let attPoints = 0;
+    // ── Current Week Calculation (Sunday to Thursday in Asia/Dhaka) ──
+    const { weekSunday, weekThursday } = DateTimeUtil.getCurrentWeekRange('Asia/Dhaka');
 
-    if (attRow && attRow.sessions) {
-      Object.entries(attRow.sessions).forEach(([sessionDate, mark]) => {
-        const datePart = sessionDate.substring(0, 10);
-        // Only count sessions from scoringStartDate onwards!
-        if (datePart < scoringStartDate) return;
+    // ── 1. Weekly Performance (from weeklyStandings) ──
+    const weeklyStanding = weeklyStandings.find(s => s.discordId === discordId);
+    const weekPoints = weeklyStanding ? weeklyStanding.totalPoints : 0;
+    const weekAttPoints = weeklyStanding ? weeklyStanding.attendancePoints : 0;
+    const weekJobPoints = weeklyStanding ? weeklyStanding.jobPoints : 0;
+    const weekJobApps = weeklyStanding ? weeklyStanding.jobTotalApps : 0;
+    const weekStreakBonus = weeklyStanding ? weeklyStanding.streakBonus : 0;
+    const weekIntPoints = weeklyStanding ? weeklyStanding.interviewPoints : 0;
+    const weekIntCount = weeklyStanding ? weeklyStanding.interviewCount : 0;
+    const weekTaskPoints = weeklyStanding ? weeklyStanding.taskPoints : 0;
+    const weekTaskCount = weeklyStanding ? weeklyStanding.taskCount : 0;
+    const weekAdj = weeklyStanding ? (weeklyStanding.manualAdjustment || 0) : 0;
 
-        const m = String(mark || "").toUpperCase().trim();
-        totalSessions++;
-        if (m === 'P' || m.startsWith('P')) {
-          presentCount++;
-          attPoints += scoring.attendancePresent;
-        } else if (m === 'A' || m.startsWith('A')) {
-          absentCount++;
-          attPoints += scoring.attendanceAbsent;
-        } else if (m === 'L' || m.startsWith('L')) {
-          leaveCount++;
-        }
-      });
-    }
+    const weeklyRankIndex = weeklyStandings.findIndex(s => s.discordId === discordId);
+    const weeklyRankStr = weeklyRankIndex >= 0 ? `#${weeklyRankIndex + 1} of ${weeklyStandings.length}` : "Unranked";
 
-    // 2. Job Application Metrics (Filtered by scoringStartDate)
-    const studentJobs = (jobsRes.jobs || []).filter(j => 
-      j.discordId === discordId && (!j.date || j.date >= scoringStartDate)
-    );
-    let totalJobs7Days = 0;
-    let jobPoints = 0;
-    let consecutiveDays = 0;
+    // ── 2. Lifetime Performance (from lifetimeStandings) ──
+    const lifetimeStanding = lifetimeStandings.find(s => s.discordId === discordId);
+    const lifetimePoints = lifetimeStanding ? lifetimeStanding.totalPoints : 0;
+    const lifetimeAttPoints = lifetimeStanding ? lifetimeStanding.attendancePoints : 0;
+    const lifetimeJobPoints = lifetimeStanding ? lifetimeStanding.jobPoints : 0;
+    const lifetimeJobApps = lifetimeStanding ? lifetimeStanding.jobTotalApps : 0;
+    const lifetimeStreakBonus = lifetimeStanding ? lifetimeStanding.streakBonus : 0;
+    const lifetimeIntPoints = lifetimeStanding ? lifetimeStanding.interviewPoints : 0;
+    const lifetimeIntCount = lifetimeStanding ? lifetimeStanding.interviewCount : 0;
+    const lifetimeTaskPoints = lifetimeStanding ? lifetimeStanding.taskPoints : 0;
+    const lifetimeAdj = lifetimeStanding ? (lifetimeStanding.manualAdjustment || 0) : 0;
 
-    studentJobs.forEach(jobDay => {
-      const count = Number(jobDay.count) || 0;
-      totalJobs7Days += count;
-      jobPoints += ScoringService.calculateDailyJobScore(count, cohortTarget);
-      if (count >= cohortTarget) consecutiveDays++;
-    });
+    const lifetimeRankIndex = lifetimeStandings.findIndex(s => s.discordId === discordId);
+    const lifetimeRankStr = lifetimeRankIndex >= 0 ? `#${lifetimeRankIndex + 1} of ${lifetimeStandings.length}` : "Unranked";
 
-    const streakBonus = Math.min(consecutiveDays * scoring.streakBonusPerDay, scoring.streakCap);
-
-    // 3. Interview Points (+2 pts default)
-    const studentInterviews = (interviewsRes.interviews || []).filter(i => 
-      i.discordId === discordId && (!i.date || i.date >= scoringStartDate)
-    );
-    const interviewCount = studentInterviews.length;
-    const interviewPoints = interviewCount * scoring.interviewPoints;
-
-    // 4. Job Task Points
-    const studentTasks = (tasksRes.tasks || []).filter(t => 
-      t.discordId === discordId && (!t.createdAt || t.createdAt >= scoringStartDate)
-    );
-    let taskPoints = 0;
-    studentTasks.forEach(t => {
-      taskPoints += Number(t.pointsAwarded) || 0;
-    });
-
-    // 5. Total Score & Rank Standing
-    const studentStanding = standings.find(s => s.discordId === discordId);
-    const totalPoints = studentStanding ? studentStanding.totalPoints : Math.round((attPoints + jobPoints + streakBonus + interviewPoints + taskPoints) * 10) / 10;
-    const rankIndex = standings.findIndex(s => s.discordId === discordId);
-    const rankStr = rankIndex >= 0 ? `#${rankIndex + 1} of ${standings.length}` : "Unranked";
-
-    // 6. Referral Lockout State
-    const hasRestrictionRole = member.roles.cache.some(r => r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase());
-    const referralStatusStr = hasRestrictionRole
-      ? "🔴 **Restricted** (Locked from #resume-needed due to low score)"
-      : "🟢 **Unlocked** (Full Access to Resume Referral Drive)";
-
-    // 7. Live Job Tracker Scrape & Analytics
+    // ── 3. Live Job Tracker Sheet Scrape (Weekly + Total Apps) ──
     const JobScraperService = require('../../services/jobScraperService');
-    const sheetRes = await GasClient.request(guildId, 'getJobSheets', {}).catch(() => ({ sheets: [] }));
     const studentSheet = (sheetRes.sheets || []).find(s => s.discordId === discordId);
-    let trackerInsightStr = "• 💼 **Sheet Status:** *Not linked yet. Run `!linksheet <URL>` to enable automated daily audits.*";
+    let trackerWeekApps = null;
+    let trackerTotalApps = null;
+    let sheetNote = "";
 
     if (studentSheet && studentSheet.sheetUrl) {
       const scrape = await JobScraperService.scrapeStudentJobSheet(studentSheet.sheetUrl, discordId);
       if (scrape.success) {
-        trackerInsightStr =
-          `• 🏢 **Unique Companies Applied:** **${scrape.uniqueCompaniesCount} Companies**\n` +
-          `• 🎯 **Top Target Roles:** ${scrape.topPositions.length > 0 ? scrape.topPositions.map(p => `\`${p}\``).join(' ') : '`Software Engineer`'}\n` +
-          `• 🌐 **Application Channels:** ${scrape.topPlatforms.length > 0 ? scrape.topPlatforms.map(p => `\`${p}\``).join(' ') : '`Online/LinkedIn`'}\n` +
-          `• 🛡️ **Data Quality:** \`${scrape.totalRows} valid rows\` | \`${scrape.duplicateLinksCount} duplicate links filtered\` | \`${scrape.invalidRowsCount} incomplete skipped\``;
+        trackerWeekApps = scrape.datedThisWeekCount ?? 0;
+        trackerTotalApps = scrape.totalRows ?? 0;
       } else {
-        trackerInsightStr = `• ⚠️ **Sheet Sync Issue:** *${scrape.error}*`;
+        sheetNote = `*(⚠️ Sheet sync issue: ${scrape.error})*`;
       }
+    } else {
+      sheetNote = "*(⚠️ Sheet not linked. Run `!linksheet <URL>` to link your Job Tracker)*";
     }
 
-    // 8. Health Status Evaluation
+    const displayWeekJobs = trackerWeekApps !== null ? trackerWeekApps : weekJobApps;
+    const weekJobsLabel = trackerWeekApps !== null ? "from Job Tracker Sheet" : "from Daily Log";
+    const displayLifetimeJobs = trackerTotalApps !== null ? trackerTotalApps : lifetimeJobApps;
+    const lifetimeJobsLabel = trackerTotalApps !== null ? "Job Tracker Sheet" : "Bot Log";
+
+    // ── 4. Attendance Counts (Current Week vs Lifetime) ──
+    const attRow = (attendanceRes.rows || []).find(r => r.discordId === discordId);
+    let weekPresent = 0, weekAbsent = 0, weekLeave = 0, weekSessions = 0;
+    let lifetimePresent = 0, lifetimeAbsent = 0, lifetimeLeave = 0, lifetimeSessions = 0;
+
+    if (attRow && attRow.sessions) {
+      Object.entries(attRow.sessions).forEach(([sessionDate, mark]) => {
+        const datePart = DateTimeUtil.normalizeDateStr(sessionDate);
+        if (!datePart) return;
+        const m = String(mark || "").toUpperCase().trim();
+
+        // Lifetime counters
+        lifetimeSessions++;
+        if (m === 'P' || m.startsWith('P')) lifetimePresent++;
+        else if (m === 'A' || m.startsWith('A')) lifetimeAbsent++;
+        else if (m === 'L' || m.startsWith('L') || m === 'LEAVE' || m === 'EXCUSED') lifetimeLeave++;
+
+        // Current week counters (Sunday to Thursday)
+        if (DateTimeUtil.isInCurrentWeek(datePart)) {
+          weekSessions++;
+          if (m === 'P' || m.startsWith('P')) weekPresent++;
+          else if (m === 'A' || m.startsWith('A')) weekAbsent++;
+          else if (m === 'L' || m.startsWith('L') || m === 'LEAVE' || m === 'EXCUSED') weekLeave++;
+        }
+      });
+    }
+
+    // ── 5. Lifetime Interviews & Tasks Counts ──
+    const studentInterviews = (interviewsRes.interviews || []).filter(i => {
+      const st = String(i.status || '').toUpperCase();
+      const co = String(i.company || '').toUpperCase();
+      return i.discordId === discordId && st !== 'VOIDED' && !co.startsWith('[VOIDED]');
+    });
+    const lifetimeInterviewCount = studentInterviews.length;
+
+    const studentTasks = (tasksRes.tasks || []).filter(t => t.discordId === discordId);
+    const lifetimeTaskCount = studentTasks.length;
+
+    // ── 6. Referral Lockout Status ──
+    const hasRestrictionRole = member.roles.cache.some(r =>
+      r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase()
+    );
+    const referralStatusStr = hasRestrictionRole
+      ? "🔴 **Restricted** (Locked from #resume-needed due to low score or 3 absences)"
+      : "🟢 **Unlocked** (Full Access to Resume Referral Drive)";
+
+    // ── 7. Health Evaluation ──
     let healthGrade = "🟢 **EXCELLENT**";
-    let healthAdvice = "Keep up the consistent job submissions and active attendance to maintain top referral priority!";
+    let healthAdvice = "You are performing strongly! Maintain daily applications and attendance to stay at the top of the leaderboard.";
 
-    if (totalSessions === 0 && totalJobs7Days === 0) {
-      healthGrade = "🟢 **READY FOR WEEK 1**";
-      healthAdvice = "Points baseline is reset. Starting Sunday, maintain daily attendance and submit 10 applications daily to build your streak and earn top referral priority!";
-    } else if (absentCount >= 3 || totalPoints < 0) {
+    if (weekSessions === 0 && displayWeekJobs === 0) {
+      healthGrade = "🟢 **READY FOR WEEK**";
+      healthAdvice = "New weekly cycle started. Submit your attendance daily and maintain 10 applications daily to earn streak points!";
+    } else if (weekAbsent >= 3 || weekPoints < 0) {
       healthGrade = "🔴 **CRITICAL (AT-RISK)**";
-      healthAdvice = "⚠️ You have 3 or more absences or negative points. Please submit attendance daily, catch up on job applications, and contact a Mentor for 1-on-1 support!";
-    } else if (absentCount >= 2 || totalJobs7Days < 15) {
+      healthAdvice = "⚠️ You have 3 or more absences or a negative score this week. Please submit attendance daily and catch up on applications!";
+    } else if (weekAbsent >= 2 || displayWeekJobs < (cohortTarget * 2)) {
       healthGrade = "🟡 **NEEDS ATTENTION**";
-      healthAdvice = "⚠️ Watch your daily attendance and aim for 10 applications daily to boost your streak points and leaderboard rank.";
+      healthAdvice = "⚠️ Watch your attendance and aim to hit the daily job target to boost your weekly streak and rank.";
     }
+
+    const weekAdjLine = weekAdj ? `• ✏️ **Manual Adjustment:** \`${weekAdj >= 0 ? '+' : ''}${weekAdj} pts\`\n` : '';
+    const lifetimeAdjLine = lifetimeAdj ? `• ✏️ **Manual Adjustment:** \`${lifetimeAdj >= 0 ? '+' : ''}${lifetimeAdj} pts\`\n` : '';
+    const sheetNoteLine = sheetNote ? `  ${sheetNote}\n` : '';
 
     return Embeds.info(
       `🩺 Student Health Scorecard · ${studentName}`,
       `👤 **Student Profile:**\n` +
       `• **Name:** **${studentName}** (<@${discordId}>)\n` +
       `• **Email:** \`${email}\` | **Region:** \`${region}\`\n` +
-      `• **Overall Rank:** 🏆 **${rankStr}**\n` +
-      `• **Health Status:** ${healthGrade}\n` +
+      `• **Health Condition:** ${healthGrade}\n` +
       `• **Referral Drive Access:** ${referralStatusStr}\n\n` +
-      `──────────────────────────────\n` +
-      `📊 **Comprehensive Points Breakdown:**\n\n` +
-      `• 📅 **Attendance (${totalSessions} sessions):** \`${attPoints >= 0 ? '+' : ''}${attPoints} pts\`\n` +
-      `  *Present: ${presentCount} | Absent: ${absentCount} | Leave: ${leaveCount}*\n\n` +
-      `• 💼 **Job Tracker (Last 7 Days):** \`${jobPoints >= 0 ? '+' : ''}${jobPoints} pts\`\n` +
-      `  *7-Day Total Apps: ${totalJobs7Days} | Streak: ${consecutiveDays} days (+${streakBonus} pts)*\n\n` +
-      `• 🎙️ **Interviews Logged (${interviewCount}):** \`+${interviewPoints} pts\` *(+${scoring.interviewPoints} pts each)*\n\n` +
-      `• 🛠️ **Job Tasks (${studentTasks.length} tasks):** \`${taskPoints >= 0 ? '+' : ''}${taskPoints} pts\`\n\n` +
-      `──────────────────────────────\n` +
-      `📈 **Live Job Application Tracker Analytics:**\n` +
-      `${trackerInsightStr}\n\n` +
-      `──────────────────────────────\n` +
-      `⭐ **TOTAL CONSOLIDATED SCORE:** **${totalPoints} PTS**\n\n` +
-      `💡 **Mentor Recommendation:**\n${healthAdvice}`,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🏆 **SECTION 1: THIS WEEK'S PERFORMANCE (${weekSunday} to ${weekThursday})**\n\n` +
+      `• 🥇 **Weekly Leaderboard Rank:** 🏆 **${weeklyRankStr}**\n` +
+      `• ⭐ **WEEKLY TOTAL SCORE:** **${weekPoints >= 0 ? '+' : ''}${weekPoints} PTS**\n\n` +
+      `📊 **This Week's Breakdown:**\n` +
+      `• 💼 **Jobs Applied This Week:** **${displayWeekJobs} jobs applied** *(${weekJobsLabel})* \`(${weekJobPoints >= 0 ? '+' : ''}${weekJobPoints} pts | Streak: +${weekStreakBonus} pts)\`\n` +
+      `${sheetNoteLine}` +
+      `• 📅 **Attendance (${weekSessions} days):** \`${weekAttPoints >= 0 ? '+' : ''}${weekAttPoints} pts\` *(P: ${weekPresent} | A: ${weekAbsent} | L: ${weekLeave})*\n` +
+      `• 🎙️ **Interviews This Week:** \`+${weekIntPoints} pts\` *(${weekIntCount} verified)*\n` +
+      `• 🛠️ **Job Tasks This Week:** \`${weekTaskPoints >= 0 ? '+' : ''}${weekTaskPoints} pts\` *(${weekTaskCount} tasks)*\n` +
+      `${weekAdjLine}\n` +
+      `💡 **Mentor Recommendation:**\n*${healthAdvice}*\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `📈 **SECTION 2: LIFETIME / ALL-TIME CAREER PERFORMANCE**\n\n` +
+      `• 👑 **Lifetime Leaderboard Rank:** 🏅 **${lifetimeRankStr}**\n` +
+      `• 🌟 **LIFETIME TOTAL SCORE:** **${lifetimePoints >= 0 ? '+' : ''}${lifetimePoints} PTS**\n\n` +
+      `📊 **Lifetime Summary & Points:**\n` +
+      `• 💼 **Total Jobs Applied:** **${displayLifetimeJobs} applications** *(${lifetimeJobsLabel})* \`(${lifetimeJobPoints >= 0 ? '+' : ''}${lifetimeJobPoints} pts | Best Streak: +${lifetimeStreakBonus} pts)\`\n` +
+      `• 📅 **Total Attendance:** **${lifetimeSessions} sessions** \`(${lifetimeAttPoints >= 0 ? '+' : ''}${lifetimeAttPoints} pts)\` *(P: ${lifetimePresent} | A: ${lifetimeAbsent} | L: ${lifetimeLeave})*\n` +
+      `• 🎙️ **Total Interviews:** **${lifetimeInterviewCount} calls** \`(+${lifetimeIntPoints} pts)\`\n` +
+      `• 🛠️ **Total Coding Tasks:** **${lifetimeTaskCount} tasks** \`(${lifetimeTaskPoints >= 0 ? '+' : ''}${lifetimeTaskPoints} pts)\`\n` +
+      `${lifetimeAdjLine}`,
       `JP ADMIN ${constants.BOT_VERSION} · Generated at ${DateTimeUtil.getFullTimestamp()}`
     );
   }

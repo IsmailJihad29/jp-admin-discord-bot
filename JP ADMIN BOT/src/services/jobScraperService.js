@@ -197,6 +197,7 @@ class JobScraperService {
 
       let validApplicationsCount = 0;
       let datedTodayCount = 0;
+      let datedThisWeekCount = 0;
       let duplicateLinksCount = 0;
       let invalidRowsCount = 0;
 
@@ -261,6 +262,20 @@ class JobScraperService {
         if (isToday) {
           datedTodayCount++;
         }
+
+        // Date check for THIS WEEK (Sunday to Thursday)
+        let isThisWeek = DateTimeUtil.isInCurrentWeek(dateRaw);
+        if (!isThisWeek) {
+          for (let c = 0; c < cells.length; c++) {
+            if (DateTimeUtil.isInCurrentWeek(cells[c])) {
+              isThisWeek = true;
+              break;
+            }
+          }
+        }
+        if (isThisWeek) {
+          datedThisWeekCount++;
+        }
       }
 
       // Sort Top Positions & Platforms
@@ -280,6 +295,7 @@ class JobScraperService {
         gid: parsed.gid,
         totalRows: validApplicationsCount,
         datedTodayCount: datedTodayCount,
+        datedThisWeekCount: datedThisWeekCount,
         uniqueCompaniesCount: uniqueCompanies.size,
         duplicateLinksCount: duplicateLinksCount,
         invalidRowsCount: invalidRowsCount,
