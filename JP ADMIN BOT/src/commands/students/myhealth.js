@@ -57,7 +57,30 @@ module.exports = {
     }
 
     // --- 2. Build Student Health Report ---
-    const targetMember = message.mentions.members.first() || message.member;
+    const cohortManager = require('../../config/cohortManager');
+    const isMentor = cohortManager.isMentor(guild.id, message.member);
+
+    let targetMember = message.mentions.members.first();
+    if (!targetMember && args[0]) {
+      const cleanArg = args[0].replace(/[<@!>]/g, '').trim();
+      targetMember = guild.members.cache.get(cleanArg) ||
+        guild.members.cache.find(m => m.user.username.toLowerCase() === cleanArg.toLowerCase());
+    }
+
+    // Students cannot inspect other students — Mentor/Supervisor only
+    if (targetMember && targetMember.id !== message.author.id && !isMentor) {
+      return message.reply({
+        embeds: [Embeds.warning(
+          "Access Restricted",
+          "Students can only check their own scorecard. To view another student's scorecard, you must be a **Mentor or Supervisor**."
+        )]
+      });
+    }
+
+    if (!targetMember) {
+      targetMember = message.member;
+    }
+
     const targetDiscordId = targetMember.id;
 
     const loading = await message.reply(`🔍 Compiling real-time performance & health scorecard for <@${targetDiscordId}>...`);
@@ -162,6 +185,9 @@ module.exports = {
     const displayLifetimeJobs = trackerTotalApps !== null ? trackerTotalApps : lifetimeJobApps;
     const lifetimeJobsLabel = trackerTotalApps !== null ? "Job Tracker Sheet" : "Bot Log";
 
+    // ── Student Attendance Start Date (from Attendance tab matrix) ──
+    const studentStartDate = weeklyStanding?.attendanceStartDate || lifetimeStanding?.attendanceStartDate || '2026-08-30';
+
     // ── 4. Attendance Counts (Current Week vs Lifetime) ──
     const attRow = (attendanceRes.rows || []).find(r => r.discordId === discordId);
     let weekPresent = 0, weekAbsent = 0, weekLeave = 0, weekSessions = 0;
@@ -175,13 +201,6 @@ module.exports = {
         if (!datePart) return;
         const m = String(mark || "").toUpperCase().trim();
 
-        // Lifetime counters
-        lifetimeSessions++;
-        lifetimeDaysSet.add(datePart);
-        if (m === 'P' || m.startsWith('P')) lifetimePresent++;
-        else if (m === 'A' || m.startsWith('A')) lifetimeAbsent++;
-        else if (m === 'L' || m.startsWith('L') || m === 'LEAVE' || m === 'EXCUSED') lifetimeLeave++;
-
         // Current week counters (Sunday to Thursday)
         if (DateTimeUtil.isInCurrentWeek(datePart)) {
           weekSessions++;
@@ -189,6 +208,15 @@ module.exports = {
           if (m === 'P' || m.startsWith('P')) weekPresent++;
           else if (m === 'A' || m.startsWith('A')) weekAbsent++;
           else if (m === 'L' || m.startsWith('L') || m === 'LEAVE' || m === 'EXCUSED') weekLeave++;
+        }
+
+        // Lifetime counters (strictly from student's attendance start date onwards)
+        if (datePart >= studentStartDate) {
+          lifetimeSessions++;
+          lifetimeDaysSet.add(datePart);
+          if (m === 'P' || m.startsWith('P')) lifetimePresent++;
+          else if (m === 'A' || m.startsWith('A')) lifetimeAbsent++;
+          else if (m === 'L' || m.startsWith('L') || m === 'LEAVE' || m === 'EXCUSED') lifetimeLeave++;
         }
       });
     }
@@ -207,15 +235,21 @@ module.exports = {
       ? `${lifetimeSessions} sessions`
       : `${lifetimeSessionStr} (${lifetimeDayStr})`;
 
-    // ── 5. Lifetime Interviews & Tasks Counts ──
+    // ── 5. Lifetime Interviews & Tasks Counts (since attendance start date) ──
     const studentInterviews = (interviewsRes.interviews || []).filter(i => {
       const st = String(i.status || '').toUpperCase();
       const co = String(i.company || '').toUpperCase();
+      const iDate = DateTimeUtil.normalizeDateStr(i.interviewDate || i.date || i.loggedDate);
+      if (iDate && iDate < studentStartDate) return false;
       return i.discordId === discordId && st !== 'VOIDED' && !co.startsWith('[VOIDED]');
     });
     const lifetimeInterviewCount = studentInterviews.length;
 
-    const studentTasks = (tasksRes.tasks || []).filter(t => t.discordId === discordId);
+    const studentTasks = (tasksRes.tasks || []).filter(t => {
+      const tDate = DateTimeUtil.normalizeDateStr(t.submittedAt || t.timestamp || t.createdAt);
+      if (tDate && tDate < studentStartDate) return false;
+      return t.discordId === discordId;
+    });
     const lifetimeTaskCount = studentTasks.length;
 
     // ── 6. Referral Lockout Status ──

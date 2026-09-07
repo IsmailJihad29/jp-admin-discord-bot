@@ -165,12 +165,54 @@ class ScoringService {
       }
     });
 
-    const scoringStartDate = scoring.scoringStartDate || "2026-08-30";
+    // Discover the cohort-wide earliest attendance date from the Attendance tab headers
+    const cohortAttDates = (attendanceRes.dates || [])
+      .map(d => DateTimeUtil.normalizeDateStr(d))
+      .filter(Boolean)
+      .sort();
+    const cohortEarliestAttDate = cohortAttDates.length > 0
+      ? cohortAttDates[0]
+      : (scoring.scoringStartDate || "2026-08-30");
+
+    // Discover individual attendance start date for each student from Attendance tab records
+    attRows.forEach(att => {
+      const student = getOrCreateStudent(att);
+      if (student && !isExcludedStatus(student.status)) {
+        if (att.sessions && typeof att.sessions === 'object') {
+          // Identify the earliest marked session date (non-empty mark)
+          const markedDates = Object.entries(att.sessions)
+            .filter(([_, mark]) => mark !== undefined && mark !== null && String(mark).trim() !== '' && String(mark).trim() !== '-')
+            .map(([d]) => DateTimeUtil.normalizeDateStr(d))
+            .filter(Boolean)
+            .sort();
+
+          if (markedDates.length > 0) {
+            student.attendanceStartDate = markedDates[0];
+          } else {
+            const allDates = Object.keys(att.sessions)
+              .map(d => DateTimeUtil.normalizeDateStr(d))
+              .filter(Boolean)
+              .sort();
+            if (allDates.length > 0) {
+              student.attendanceStartDate = allDates[0];
+            }
+          }
+        }
+      }
+    });
+
+    // Fallback for students not explicitly in Attendance tab
+    studentsList.forEach(student => {
+      if (!student.attendanceStartDate) {
+        student.attendanceStartDate = cohortEarliestAttDate;
+      }
+    });
 
     // 3. Process Attendance Points
     attRows.forEach(att => {
       const student = getOrCreateStudent(att);
       if (student && !isExcludedStatus(student.status)) {
+        const studentStartDate = student.attendanceStartDate || cohortEarliestAttDate;
         if (att.sessions && typeof att.sessions === 'object') {
           Object.entries(att.sessions).forEach(([sessionDate, mark]) => {
             const datePart = DateTimeUtil.normalizeDateStr(sessionDate);
@@ -179,7 +221,7 @@ class ScoringService {
             // Strict Sunday-Thursday weekly filter
             if (weeklyOnly) {
               if (!isInCurrentWeek(datePart)) return;
-            } else if (datePart < scoringStartDate) {
+            } else if (datePart < studentStartDate) {
               return;
             }
 
@@ -190,7 +232,7 @@ class ScoringService {
             }
 
             const m = String(mark || "").toUpperCase().trim();
-            if (m === 'OFF' || m === '0' || m === 'EXCUSED' || m === 'L' || m === 'LEAVE') {
+            if (m === 'OFF' || m === '0' || m === 'EXCUSED' || m === 'L' || m === 'LEAVE' || m === '') {
               // 0 points
               return;
             }
@@ -218,8 +260,6 @@ class ScoringService {
       // If weeklyOnly, only count jobs within current week (Sunday to Thursday)
       if (weeklyOnly) {
         if (!isInCurrentWeek(normDate)) return;
-      } else if (normDate && normDate < scoringStartDate) {
-        return;
       }
 
       const targetStudent = getOrCreateStudent(j);
@@ -259,11 +299,17 @@ class ScoringService {
         return da < db ? -1 : da > db ? 1 : 0;
       });
 
+      const studentStartDate = student.attendanceStartDate || cohortEarliestAttDate;
+      // Filter out any job entries before the student's attendance start date (if not weeklyOnly)
+      const eligibleJobs = weeklyOnly
+        ? sortedJobs
+        : sortedJobs.filter(jobDay => !jobDay.normDate || jobDay.normDate >= studentStartDate);
+
       let maxStreak = 0;
       let currentStreak = 0;
       let prevDate = null;
 
-      sortedJobs.forEach(jobDay => {
+      eligibleJobs.forEach(jobDay => {
         const count = Number(jobDay.count) || 0;
         student.jobTotalApps += count;
 
@@ -309,45 +355,48 @@ class ScoringService {
 
       const itemDate = item.interviewDate || item.date || item.loggedDate;
       const normDate = DateTimeUtil.normalizeDateStr(itemDate);
+      const student = getOrCreateStudent(item);
+      if (!student || isExcludedStatus(student.status)) return;
+
+      const studentStartDate = student.attendanceStartDate || cohortEarliestAttDate;
       if (weeklyOnly) {
         if (!isInCurrentWeek(normDate)) return;
-      } else if (normDate && normDate < scoringStartDate) {
+      } else if (normDate && normDate < studentStartDate) {
         return;
       }
 
-      const student = getOrCreateStudent(item);
-      if (student && !isExcludedStatus(student.status)) {
-        student.interviewCount += 1;
-        student.interviewPoints += scoring.interviewPoints;
-      }
+      student.interviewCount += 1;
+      student.interviewPoints += scoring.interviewPoints;
     });
 
     // 6. Process Job Task Points
     (tasksRes.tasks || []).forEach(task => {
       const taskDate = task.submittedAt || task.timestamp || task.createdAt;
       const normDate = DateTimeUtil.normalizeDateStr(taskDate);
+      const student = getOrCreateStudent(task);
+      if (!student || isExcludedStatus(student.status)) return;
+
+      const studentStartDate = student.attendanceStartDate || cohortEarliestAttDate;
       if (weeklyOnly) {
         if (!isInCurrentWeek(normDate)) return;
-      } else if (normDate && normDate < scoringStartDate) {
+      } else if (normDate && normDate < studentStartDate) {
         return;
       }
 
-      const student = getOrCreateStudent(task);
-      if (student && !isExcludedStatus(student.status)) {
-        student.taskCount += 1;
-        student.taskPoints += Number(task.pointsAwarded) || 0;
-      }
+      student.taskCount += 1;
+      student.taskPoints += Number(task.pointsAwarded) || 0;
     });
 
     // 7. Apply manual point adjustments (stored in cohorts.json by !adjustpoints command)
     const manualAdjs = cohort?.manualAdjustments || {};
     studentsList.forEach(student => {
       if (!student.discordId) return;
+      const studentStartDate = student.attendanceStartDate || cohortEarliestAttDate;
       const adjList = manualAdjs[student.discordId] || [];
       student.manualAdjustment = adjList.reduce((sum, a) => {
         const normDate = DateTimeUtil.normalizeDateStr(a.date);
         if (weeklyOnly && normDate && !isInCurrentWeek(normDate)) return sum;
-        if (!weeklyOnly && normDate && normDate < scoringStartDate) return sum;
+        if (!weeklyOnly && normDate && normDate < studentStartDate) return sum;
         return sum + (Number(a.amount) || 0);
       }, 0);
     });
