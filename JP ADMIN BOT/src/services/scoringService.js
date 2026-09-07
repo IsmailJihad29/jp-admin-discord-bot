@@ -232,13 +232,28 @@ class ScoringService {
       jobsByStudent.get(key).push({ ...j, normDate });
     });
 
+    const todayStr = DateTimeUtil.getTodayDateStr();
+    const nowDhaka = DateTimeUtil.now();
+    const isBeforeNightCutoff = (nowDhaka.hour < 23 || (nowDhaka.hour === 23 && nowDhaka.minute < 30));
+
     studentsList.forEach(student => {
       if (isExcludedStatus(student.status)) return;
       const key = student.discordId || student.email || student.name;
       const studentJobs = jobsByStudent.get(key) || [];
 
+      // Deduplicate jobs by date: if multiple scrapes exist for the same day, pick the latest / highest count
+      const jobsByDate = new Map();
+      studentJobs.forEach(jobDay => {
+        const d = jobDay.normDate;
+        if (!d) return;
+        const count = Number(jobDay.count) || 0;
+        if (!jobsByDate.has(d) || count > jobsByDate.get(d).count) {
+          jobsByDate.set(d, { ...jobDay, count });
+        }
+      });
+
       // Sort jobs by date ascending to detect consecutive days properly
-      const sortedJobs = [...studentJobs].sort((a, b) => {
+      const sortedJobs = Array.from(jobsByDate.values()).sort((a, b) => {
         const da = a.normDate || '';
         const db = b.normDate || '';
         return da < db ? -1 : da > db ? 1 : 0;
@@ -252,7 +267,11 @@ class ScoringService {
         const count = Number(jobDay.count) || 0;
         student.jobTotalApps += count;
 
-        const dayPts = ScoringService.calculateDailyJobScore(count, cohortTarget);
+        let dayPts = ScoringService.calculateDailyJobScore(count, cohortTarget);
+        // If it is TODAY and before the night cutoff (23:30), do not penalize incomplete jobs prematurely
+        if (jobDay.normDate === todayStr && isBeforeNightCutoff && dayPts < 0) {
+          dayPts = 0; // Day is still in progress; student has until 23:30 to apply
+        }
         student.jobPoints += dayPts;
 
         // Track consecutive days where target was hit

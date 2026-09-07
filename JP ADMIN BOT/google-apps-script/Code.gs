@@ -2313,7 +2313,37 @@ function recordJobDailyEntry(ss, data) {
   if (!sheet) return { error: "Jobs_Daily sheet not found" };
 
   var dateStr = data.date || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
+  var email = String(data.email || "").toLowerCase().trim();
+  var discordId = String(data.discordId || "").trim();
 
+  var lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    var values = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
+    for (var i = 0; i < values.length; i++) {
+      var row = values[i];
+      var rDate = row[0] instanceof Date ? Utilities.formatDate(row[0], CONFIG.TIMEZONE, "yyyy-MM-dd") : String(row[0]).substring(0, 10);
+      var rEmail = String(row[1] || "").toLowerCase().trim();
+      var rDiscord = String(row[4] || "").trim();
+
+      // Check if entry for this date and student already exists
+      if (rDate === dateStr && ((discordId && rDiscord === discordId) || (email && rEmail === email))) {
+        var rowIdx = i + 2;
+        sheet.getRange(rowIdx, 1, 1, 8).setValues([[
+          dateStr,
+          data.email || row[1] || "",
+          data.count || 0,
+          data.name || row[3] || "",
+          data.discordId || row[4] || "",
+          data.totalRows || data.count || 0,
+          data.newRows || data.count || 0,
+          data.points || 0
+        ]]);
+        return { status: "SUCCESS", updated: true, date: dateStr, row: rowIdx };
+      }
+    }
+  }
+
+  // If not found, append new row
   sheet.appendRow([
     dateStr,
     data.email || "",
@@ -2325,7 +2355,7 @@ function recordJobDailyEntry(ss, data) {
     data.points || 0
   ]);
 
-  return { status: "SUCCESS", date: dateStr };
+  return { status: "SUCCESS", updated: false, date: dateStr };
 }
 
 function getJobsDailyHistory(ss, days) {
@@ -2337,8 +2367,16 @@ function getJobsDailyHistory(ss, days) {
 
   for (var i = 1; i < values.length; i++) {
     var row = values[i];
+    var dVal = row[0];
+    var dStr = "";
+    if (dVal instanceof Date) {
+      dStr = Utilities.formatDate(dVal, CONFIG.TIMEZONE, "yyyy-MM-dd");
+    } else {
+      dStr = String(dVal).trim();
+    }
+
     jobs.push({
-      date: String(row[0]),
+      date: dStr,
       email: String(row[1]),
       count: Number(row[2]) || 0,
       name: String(row[3]),

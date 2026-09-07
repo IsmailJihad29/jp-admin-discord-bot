@@ -166,6 +166,8 @@ module.exports = {
     const attRow = (attendanceRes.rows || []).find(r => r.discordId === discordId);
     let weekPresent = 0, weekAbsent = 0, weekLeave = 0, weekSessions = 0;
     let lifetimePresent = 0, lifetimeAbsent = 0, lifetimeLeave = 0, lifetimeSessions = 0;
+    const weekDaysSet = new Set();
+    const lifetimeDaysSet = new Set();
 
     if (attRow && attRow.sessions) {
       Object.entries(attRow.sessions).forEach(([sessionDate, mark]) => {
@@ -175,6 +177,7 @@ module.exports = {
 
         // Lifetime counters
         lifetimeSessions++;
+        lifetimeDaysSet.add(datePart);
         if (m === 'P' || m.startsWith('P')) lifetimePresent++;
         else if (m === 'A' || m.startsWith('A')) lifetimeAbsent++;
         else if (m === 'L' || m.startsWith('L') || m === 'LEAVE' || m === 'EXCUSED') lifetimeLeave++;
@@ -182,12 +185,27 @@ module.exports = {
         // Current week counters (Sunday to Thursday)
         if (DateTimeUtil.isInCurrentWeek(datePart)) {
           weekSessions++;
+          weekDaysSet.add(datePart);
           if (m === 'P' || m.startsWith('P')) weekPresent++;
           else if (m === 'A' || m.startsWith('A')) weekAbsent++;
           else if (m === 'L' || m.startsWith('L') || m === 'LEAVE' || m === 'EXCUSED') weekLeave++;
         }
       });
     }
+
+    const weekDaysCount = weekDaysSet.size;
+    const weekDayStr = weekDaysCount === 1 ? '1 day' : `${weekDaysCount} days`;
+    const weekSessionStr = weekSessions === 1 ? '1 session' : `${weekSessions} sessions`;
+    const weekAttendanceLabel = weekDaysCount === weekSessions
+      ? `${weekSessions} sessions`
+      : `${weekDayStr}, ${weekSessionStr}`;
+
+    const lifetimeDaysCount = lifetimeDaysSet.size;
+    const lifetimeDayStr = lifetimeDaysCount === 1 ? '1 day' : `${lifetimeDaysCount} days`;
+    const lifetimeSessionStr = lifetimeSessions === 1 ? '1 session' : `${lifetimeSessions} sessions`;
+    const lifetimeAttendanceLabel = lifetimeDaysCount === lifetimeSessions
+      ? `${lifetimeSessions} sessions`
+      : `${lifetimeSessionStr} (${lifetimeDayStr})`;
 
     // ── 5. Lifetime Interviews & Tasks Counts ──
     const studentInterviews = (interviewsRes.interviews || []).filter(i => {
@@ -201,62 +219,60 @@ module.exports = {
     const lifetimeTaskCount = studentTasks.length;
 
     // ── 6. Referral Lockout Status ──
-    const hasRestrictionRole = member.roles.cache.some(r =>
-      r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase()
-    );
+    const hasRestrictionRole = member?.roles?.cache?.some
+      ? member.roles.cache.some(r =>
+          r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase()
+        )
+      : false;
     const referralStatusStr = hasRestrictionRole
-      ? "🔴 **Restricted** (Locked from #resume-needed due to low score or 3 absences)"
-      : "🟢 **Unlocked** (Full Access to Resume Referral Drive)";
+      ? "Restricted (Score < 0 or >= 3 absences)"
+      : "Unlocked (Eligible for Referrals)";
 
     // ── 7. Health Evaluation ──
-    let healthGrade = "🟢 **EXCELLENT**";
-    let healthAdvice = "You are performing strongly! Maintain daily applications and attendance to stay at the top of the leaderboard.";
+    let healthGrade = "🟢 On Track";
+    let healthAdvice = "You are performing well. Maintain daily attendance and submit applications to keep your rank strong.";
 
-    if (weekSessions === 0 && displayWeekJobs === 0) {
-      healthGrade = "🟢 **READY FOR WEEK**";
-      healthAdvice = "New weekly cycle started. Submit your attendance daily and maintain 10 applications daily to earn streak points!";
-    } else if (weekAbsent >= 3 || weekPoints < 0) {
-      healthGrade = "🔴 **CRITICAL (AT-RISK)**";
-      healthAdvice = "⚠️ You have 3 or more absences or a negative score this week. Please submit attendance daily and catch up on applications!";
-    } else if (weekAbsent >= 2 || displayWeekJobs < (cohortTarget * 2)) {
-      healthGrade = "🟡 **NEEDS ATTENTION**";
-      healthAdvice = "⚠️ Watch your attendance and aim to hit the daily job target to boost your weekly streak and rank.";
+    if (weekAbsent >= 3) {
+      healthGrade = "🔴 At Risk (Absences)";
+      healthAdvice = "You have 3 or more absences this week. Prioritize attending all remaining sessions to avoid referral lockout.";
+    } else if (weekPoints < 0 && weekDaysCount >= 3) {
+      healthGrade = "🟡 Needs Attention (Low Points)";
+      healthAdvice = "Your weekly score is negative. Catch up on your daily job applications to recover points.";
+    } else if (weekAbsent >= 2) {
+      healthGrade = "🟡 Needs Attention (Attendance)";
+      healthAdvice = "You have 2 absences. Make sure to attend all upcoming sessions.";
+    } else if (weekDaysCount <= 1) {
+      healthGrade = "🟢 Week Started";
+      healthAdvice = "New weekly cycle started. Keep up your daily attendance and aim for 10 applications daily.";
     }
 
-    const weekAdjLine = weekAdj ? `• ✏️ **Manual Adjustment:** \`${weekAdj >= 0 ? '+' : ''}${weekAdj} pts\`\n` : '';
-    const lifetimeAdjLine = lifetimeAdj ? `• ✏️ **Manual Adjustment:** \`${lifetimeAdj >= 0 ? '+' : ''}${lifetimeAdj} pts\`\n` : '';
-    const sheetNoteLine = sheetNote ? `  ${sheetNote}\n` : '';
+    const weekAdjLine = weekAdj ? `• **Manual Adjustment:** \`${weekAdj >= 0 ? '+' : ''}${weekAdj} pts\`\n` : '';
+    const lifetimeAdjLine = lifetimeAdj ? `• **Manual Adjustment:** \`${lifetimeAdj >= 0 ? '+' : ''}${lifetimeAdj} pts\`\n` : '';
+    const sheetNoteLine = sheetNote ? `  ↳ ${sheetNote}\n` : '';
 
     return Embeds.info(
-      `🩺 Student Health Scorecard · ${studentName}`,
-      `👤 **Student Profile:**\n` +
+      `Student Health Scorecard · ${studentName}`,
+      `**Student Profile**\n` +
       `• **Name:** **${studentName}** (<@${discordId}>)\n` +
       `• **Email:** \`${email}\` | **Region:** \`${region}\`\n` +
-      `• **Health Condition:** ${healthGrade}\n` +
-      `• **Referral Drive Access:** ${referralStatusStr}\n\n` +
-      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `🏆 **SECTION 1: THIS WEEK'S PERFORMANCE (${weekSunday} to ${weekThursday})**\n\n` +
-      `• 🥇 **Weekly Leaderboard Rank:** 🏆 **${weeklyRankStr}**\n` +
-      `• ⭐ **WEEKLY TOTAL SCORE:** **${weekPoints >= 0 ? '+' : ''}${weekPoints} PTS**\n\n` +
-      `📊 **This Week's Breakdown:**\n` +
-      `• 💼 **Jobs Applied This Week:** **${displayWeekJobs} jobs applied** *(${weekJobsLabel})* \`(${weekJobPoints >= 0 ? '+' : ''}${weekJobPoints} pts | Streak: +${weekStreakBonus} pts)\`\n` +
+      `• **Status:** ${healthGrade} | **Referral Drive:** ${referralStatusStr}\n\n` +
+      `**Weekly Performance** (${weekSunday} to ${weekThursday})\n` +
+      `• **Weekly Total Score:** **${weekPoints >= 0 ? '+' : ''}${weekPoints} pts** (Rank: **${weeklyRankStr}**)\n` +
+      `• **Job Applications:** ${displayWeekJobs} applied *(${weekJobsLabel})* \`(${weekJobPoints >= 0 ? '+' : ''}${weekJobPoints} pts | Streak: +${weekStreakBonus} pts)\`\n` +
       `${sheetNoteLine}` +
-      `• 📅 **Attendance (${weekSessions} days):** \`${weekAttPoints >= 0 ? '+' : ''}${weekAttPoints} pts\` *(P: ${weekPresent} | A: ${weekAbsent} | L: ${weekLeave})*\n` +
-      `• 🎙️ **Interviews This Week:** \`+${weekIntPoints} pts\` *(${weekIntCount} verified)*\n` +
-      `• 🛠️ **Job Tasks This Week:** \`${weekTaskPoints >= 0 ? '+' : ''}${weekTaskPoints} pts\` *(${weekTaskCount} tasks)*\n` +
+      `• **Attendance:** ${weekAttendanceLabel} \`(${weekAttPoints >= 0 ? '+' : ''}${weekAttPoints} pts)\` *(P: ${weekPresent} | A: ${weekAbsent} | L: ${weekLeave})*\n` +
+      `• **Interviews:** ${weekIntCount} verified \`(+${weekIntPoints} pts)\`\n` +
+      `• **Job Tasks:** ${weekTaskCount} completed \`(${weekTaskPoints >= 0 ? '+' : ''}${weekTaskPoints} pts)\`\n` +
       `${weekAdjLine}\n` +
-      `💡 **Mentor Recommendation:**\n*${healthAdvice}*\n\n` +
-      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `📈 **SECTION 2: LIFETIME / ALL-TIME CAREER PERFORMANCE**\n\n` +
-      `• 👑 **Lifetime Leaderboard Rank:** 🏅 **${lifetimeRankStr}**\n` +
-      `• 🌟 **LIFETIME TOTAL SCORE:** **${lifetimePoints >= 0 ? '+' : ''}${lifetimePoints} PTS**\n\n` +
-      `📊 **Lifetime Summary & Points:**\n` +
-      `• 💼 **Total Jobs Applied:** **${displayLifetimeJobs} applications** *(${lifetimeJobsLabel})* \`(${lifetimeJobPoints >= 0 ? '+' : ''}${lifetimeJobPoints} pts | Best Streak: +${lifetimeStreakBonus} pts)\`\n` +
-      `• 📅 **Total Attendance:** **${lifetimeSessions} sessions** \`(${lifetimeAttPoints >= 0 ? '+' : ''}${lifetimeAttPoints} pts)\` *(P: ${lifetimePresent} | A: ${lifetimeAbsent} | L: ${lifetimeLeave})*\n` +
-      `• 🎙️ **Total Interviews:** **${lifetimeInterviewCount} calls** \`(+${lifetimeIntPoints} pts)\`\n` +
-      `• 🛠️ **Total Coding Tasks:** **${lifetimeTaskCount} tasks** \`(${lifetimeTaskPoints >= 0 ? '+' : ''}${lifetimeTaskPoints} pts)\`\n` +
+      `**Mentor Guidance**\n*${healthAdvice}*\n\n` +
+      `**Lifetime Career Summary**\n` +
+      `• **Lifetime Total Score:** **${lifetimePoints >= 0 ? '+' : ''}${lifetimePoints} pts** (Rank: **${lifetimeRankStr}**)\n` +
+      `• **Total Applications:** ${displayLifetimeJobs} applied *(${lifetimeJobsLabel})* \`(${lifetimeJobPoints >= 0 ? '+' : ''}${lifetimeJobPoints} pts | Best Streak: +${lifetimeStreakBonus} pts)\`\n` +
+      `• **Total Attendance:** ${lifetimeAttendanceLabel} \`(${lifetimeAttPoints >= 0 ? '+' : ''}${lifetimeAttPoints} pts)\` *(P: ${lifetimePresent} | A: ${lifetimeAbsent} | L: ${lifetimeLeave})*\n` +
+      `• **Total Interviews:** ${lifetimeInterviewCount} calls \`(+${lifetimeIntPoints} pts)\`\n` +
+      `• **Total Job Tasks:** ${lifetimeTaskCount} completed \`(${lifetimeTaskPoints >= 0 ? '+' : ''}${lifetimeTaskPoints} pts)\`\n` +
       `${lifetimeAdjLine}`,
-      `JP ADMIN ${constants.BOT_VERSION} · Generated at ${DateTimeUtil.getFullTimestamp()}`
+      `JP ADMIN ${constants.BOT_VERSION} · ${DateTimeUtil.getFullTimestamp()}`
     );
   }
 };
