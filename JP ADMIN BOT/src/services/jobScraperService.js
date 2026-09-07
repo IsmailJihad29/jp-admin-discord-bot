@@ -121,7 +121,9 @@ class JobScraperService {
   /**
    * Scrapes, validates, and analyzes a student's public Google Sheet
    */
-  static async scrapeStudentJobSheet(sheetUrl, studentDiscordId) {
+  static async scrapeStudentJobSheet(sheetUrl, studentDiscordId, options = {}) {
+    const startDate = options.startDate ? DateTimeUtil.normalizeDateStr(options.startDate) : null;
+
     if (sheetUrl && sheetUrl.includes('/copy')) {
       return {
         success: false,
@@ -196,6 +198,7 @@ class JobScraperService {
       const platformCounts = {};
 
       let validApplicationsCount = 0;
+      let datedSinceStartCount = 0;
       let datedTodayCount = 0;
       let datedThisWeekCount = 0;
       let duplicateLinksCount = 0;
@@ -238,6 +241,23 @@ class JobScraperService {
         // Row is VALID!
         validApplicationsCount++;
         uniqueCompanies.add(company.toLowerCase());
+
+        // Check if application is on or after student's attendance start date
+        let rowDate = DateTimeUtil.normalizeDateStr(dateRaw);
+        if (!rowDate) {
+          for (let c = 0; c < cells.length; c++) {
+            const nd = DateTimeUtil.normalizeDateStr(cells[c]);
+            if (nd) {
+              rowDate = nd;
+              break;
+            }
+          }
+        }
+
+        const isSinceStartDate = !startDate || !rowDate || rowDate >= startDate;
+        if (isSinceStartDate) {
+          datedSinceStartCount++;
+        }
 
         // Count Positions
         const cleanPos = position.split(/[/,-]/)[0].trim();
@@ -294,6 +314,7 @@ class JobScraperService {
         sheetId: parsed.sheetId,
         gid: parsed.gid,
         totalRows: validApplicationsCount,
+        datedSinceStartCount: datedSinceStartCount,
         datedTodayCount: datedTodayCount,
         datedThisWeekCount: datedThisWeekCount,
         uniqueCompaniesCount: uniqueCompanies.size,

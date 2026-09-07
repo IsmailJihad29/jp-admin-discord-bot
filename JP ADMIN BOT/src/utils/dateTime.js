@@ -49,7 +49,7 @@ class DateTimeUtil {
 
   static normalizeDateStr(raw, timezone = 'Asia/Dhaka') {
     if (!raw) return null;
-    const str = String(raw).trim();
+    const str = String(raw).trim().replace(/,\s*/g, ' ');
     const currentYear = DateTime.now().setZone(timezone).year;
 
     // 1. YYYY-MM-DD
@@ -64,9 +64,9 @@ class DateTimeUtil {
     m = str.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2})$/);
     if (m) return `20${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
 
-    // 4. DD-MMM-YYYY, DD MMM YYYY, or DD-MMM (e.g. 7-Sep-2026, 7 Sep, 07-Sep)
+    // 4. DD-MMM-YYYY, DD MMM YYYY, or DD-MMM (e.g. 7-Sep-2026, 7 Sep, 07-Sep, 6, September)
     const monthNames = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
-    m = str.match(/^(\d{1,2})[-\s]([a-zA-Z]{3,9})(?:[-\s](\d{2,4}))?/);
+    m = str.match(/^(\d{1,2})[-\s]+([a-zA-Z]{3,9})(?:[-\s]+(\d{2,4}))?/);
     if (m) {
       const day = m[1].padStart(2, '0');
       const monStr = m[2].substring(0, 3).toLowerCase();

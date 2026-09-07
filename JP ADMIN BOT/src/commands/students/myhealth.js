@@ -162,6 +162,10 @@ module.exports = {
     const lifetimeRankStr = lifetimeRankIndex >= 0 ? `#${lifetimeRankIndex + 1} of ${lifetimeStandings.length}` : "Unranked";
 
     // ── 3. Live Job Tracker Sheet Scrape (Weekly + Total Apps) ──
+    // ── Student Attendance Start Date (from Attendance tab matrix) ──
+    const studentStartDate = weeklyStanding?.attendanceStartDate || lifetimeStanding?.attendanceStartDate || '2026-08-30';
+
+    // ── 3. Live Job Tracker Sheet Scrape (Weekly + Total Apps since attendance start date) ──
     const JobScraperService = require('../../services/jobScraperService');
     const studentSheet = (sheetRes.sheets || []).find(s => s.discordId === discordId);
     let trackerWeekApps = null;
@@ -169,10 +173,10 @@ module.exports = {
     let sheetNote = "";
 
     if (studentSheet && studentSheet.sheetUrl) {
-      const scrape = await JobScraperService.scrapeStudentJobSheet(studentSheet.sheetUrl, discordId);
+      const scrape = await JobScraperService.scrapeStudentJobSheet(studentSheet.sheetUrl, discordId, { startDate: studentStartDate });
       if (scrape.success) {
         trackerWeekApps = scrape.datedThisWeekCount ?? 0;
-        trackerTotalApps = scrape.totalRows ?? 0;
+        trackerTotalApps = scrape.datedSinceStartCount ?? (scrape.totalRows ?? 0);
       } else {
         sheetNote = `*(⚠️ Sheet sync issue: ${scrape.error})*`;
       }
@@ -184,9 +188,6 @@ module.exports = {
     const weekJobsLabel = trackerWeekApps !== null ? "from Job Tracker Sheet" : "from Daily Log";
     const displayLifetimeJobs = trackerTotalApps !== null ? trackerTotalApps : lifetimeJobApps;
     const lifetimeJobsLabel = trackerTotalApps !== null ? "Job Tracker Sheet" : "Bot Log";
-
-    // ── Student Attendance Start Date (from Attendance tab matrix) ──
-    const studentStartDate = weeklyStanding?.attendanceStartDate || lifetimeStanding?.attendanceStartDate || '2026-08-30';
 
     // ── 4. Attendance Counts (Current Week vs Lifetime) ──
     const attRow = (attendanceRes.rows || []).find(r => r.discordId === discordId);
