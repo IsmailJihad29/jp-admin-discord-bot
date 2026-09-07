@@ -6,7 +6,7 @@
  * =========================================================================
  */
 
-var SCRIPT_VERSION = "v50";
+var SCRIPT_VERSION = "v51";
 var CONFIG = {
   SECRET_KEY: "JP_ADMIN_26", // Synced with .env DEFAULT_GAS_SECRET
   TIMEZONE: "Asia/Dhaka"
@@ -910,6 +910,94 @@ function recordAttendanceSession(ss, data) {
   return { status: "SUCCESS", date: dateStr, updatedStudents: updatedCount, colIndex: dateColIndex };
 }
 
+/**
+ * High-performance Bulk Attendance Matrix Writer
+ * Updates multiple dates/sessions in a single atomic spreadsheet call.
+ */
+function recordAttendanceSessionsBulk(ss, sessions) {
+  if (!sessions || sessions.length === 0) return { updatedSessions: 0 };
+  var sheet = ss.getSheetByName("Attendance");
+  if (!sheet) return { error: "Attendance sheet not found" };
+
+  // Sync roster students ONCE before matrix update
+  syncAttendanceRosterStudents(ss);
+
+  var dataRange = sheet.getDataRange();
+  var values = dataRange.getValues();
+  if (values.length <= 1) return { updatedSessions: 0 };
+
+  var headers = values[0];
+  var originalCols = headers.length;
+
+  // Build ID / Email to row index (0-indexed in values array)
+  var idToRow = {};
+  for (var r = 1; r < values.length; r++) {
+    var dId = String(values[r][3] || "").trim();
+    var email = String(values[r][1] || "").toLowerCase().trim();
+    if (dId) idToRow["id:" + dId] = r;
+    if (email) idToRow["email:" + email] = r;
+  }
+
+  // Map existing header dates to column index (0-indexed)
+  var headerMap = {};
+  for (var c = 6; c < headers.length; c++) {
+    var hVal = headers[c];
+    var hStr = "";
+    if (hVal instanceof Date) {
+      hStr = Utilities.formatDate(hVal, CONFIG.TIMEZONE, "yyyy-MM-dd");
+    } else {
+      hStr = String(hVal || "").trim();
+    }
+    if (hStr) headerMap[hStr.toLowerCase()] = c;
+  }
+
+  var newColumnsCount = 0;
+
+  // Process all sessions in memory
+  sessions.forEach(function(session) {
+    var dateStr = String(session.date || "").trim();
+    if (!dateStr) return;
+    var colIdx = headerMap[dateStr.toLowerCase()];
+
+    if (colIdx === undefined) {
+      colIdx = headers.length;
+      headers.push(dateStr);
+      headerMap[dateStr.toLowerCase()] = colIdx;
+      newColumnsCount++;
+
+      // Fill existing rows with default 'A' for this new session
+      for (var rowI = 1; rowI < values.length; rowI++) {
+        values[rowI].push("A");
+      }
+    }
+
+    // Apply student statuses
+    (session.records || []).forEach(function(rec) {
+      var targetRow = (rec.discordId ? idToRow["id:" + rec.discordId] : undefined);
+      if (targetRow === undefined && rec.email) {
+        targetRow = idToRow["email:" + String(rec.email).toLowerCase()];
+      }
+      if (targetRow !== undefined && targetRow >= 1 && targetRow < values.length) {
+        values[targetRow][colIdx] = rec.status;
+      }
+    });
+  });
+
+  // Write the entire updated attendance table back in one single shot
+  sheet.getRange(1, 1, values.length, values[0].length).setValues(values);
+
+  // Format any newly added header columns
+  if (newColumnsCount > 0) {
+    var startNewCol = originalCols + 1;
+    sheet.getRange(1, startNewCol, 1, newColumnsCount)
+      .setNumberFormat("@")
+      .setFontWeight("bold")
+      .setBackground("#e2e8f0");
+  }
+
+  return { status: "SUCCESS", updatedSessions: sessions.length, totalCols: values[0].length };
+}
+
 function getAttendanceData(ss) {
   var sheet = ss.getSheetByName("Attendance");
   if (!sheet || sheet.getLastRow() <= 1) return { dates: [], rows: [] };
@@ -1585,6 +1673,7 @@ function syncHistoricalAttendanceFromForms(ss, options) {
   var dailyDatesProcessed = [];
   var morningDatesProcessed = [];
   var totalSubmissionsCount = 0;
+  var sessionsToRecord = [];
 
   // 3. Process Daily Attendance tab
   if (syncType === "all" || syncType === "daily") {
@@ -1630,7 +1719,7 @@ function syncHistoricalAttendanceFromForms(ss, options) {
           return { discordId: s.discordId, email: s.email, name: s.name, status: status };
         });
 
-        recordAttendanceSession(ss, { date: dDate, records: records });
+        sessionsToRecord.push({ date: dDate, records: records });
         dailyDatesProcessed.push(dDate);
       });
     }
@@ -1681,10 +1770,15 @@ function syncHistoricalAttendanceFromForms(ss, options) {
           return { discordId: s.discordId, email: s.email, name: s.name, status: status };
         });
 
-        recordAttendanceSession(ss, { date: colHeader, records: records });
+        sessionsToRecord.push({ date: colHeader, records: records });
         morningDatesProcessed.push(mDate);
       });
     }
+  }
+
+  // 5. Bulk record all sessions into Attendance sheet in a single fast operation
+  if (sessionsToRecord.length > 0) {
+    recordAttendanceSessionsBulk(ss, sessionsToRecord);
   }
 
   // Compute combined unique dates

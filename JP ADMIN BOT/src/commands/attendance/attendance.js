@@ -8,14 +8,24 @@ const DateTimeUtil = require('../../utils/dateTime');
 
 module.exports = {
   name: 'attendance',
-  aliases: ['absent', 'repairattendance', 'checkattendance'],
+  aliases: ['absent', 'repairattendance', 'checkattendance', 'att', 'scanattendance'],
   description: 'View, repair, and check attendance metrics and absences',
-  usage: '!attendance | !absent [date] | !repairattendance',
+  usage: '!attendance | !absent [date] | !attendance sync | !repairattendance',
   mentorOnly: true,
 
   async execute(message, args, client) {
     const commandName = message.content.slice(1).split(/ +/)[0].toLowerCase();
     const guildId = message.guild.id;
+
+    // Handle "!attendance sync", "!att sync", "!attendance all"
+    if (commandName === 'attendance' || commandName === 'att') {
+      const sub = args[0]?.toLowerCase();
+      if (sub === 'sync' || sub === 'all' || sub === 'backfill') {
+        const syncCmd = require('./syncattendance');
+        const forwardArgs = sub === 'sync' ? (args.slice(1).length ? args.slice(1) : ['all']) : args;
+        return syncCmd.execute(message, forwardArgs, client);
+      }
+    }
 
     if (commandName === 'absent') {
       const targetDate = args[0] || DateTimeUtil.getTodayDateStr();

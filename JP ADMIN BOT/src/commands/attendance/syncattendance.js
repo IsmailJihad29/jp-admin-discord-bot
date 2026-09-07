@@ -28,14 +28,15 @@ module.exports = {
     let startDate = null;
     let endDate = null;
 
-    const fullArgs = args.join(' ').trim();
+    const cleanedArgs = args[0]?.toLowerCase() === 'sync' ? args.slice(1) : args;
+    const fullArgs = cleanedArgs.join(' ').trim();
 
     // Check type keywords
-    if (args[0]?.toLowerCase() === 'daily') {
+    if (cleanedArgs[0]?.toLowerCase() === 'daily') {
       syncType = "daily";
-    } else if (args[0]?.toLowerCase() === 'morning') {
+    } else if (cleanedArgs[0]?.toLowerCase() === 'morning') {
       syncType = "morning";
-    } else if (args[0]?.toLowerCase() === 'all') {
+    } else if (cleanedArgs[0]?.toLowerCase() === 'all') {
       syncType = "all";
     }
 
@@ -86,11 +87,11 @@ module.exports = {
         });
       }
 
-      // If earliest synced date is earlier than current scoringStartDate, rebase scoringStartDate so all past points count
+      // Only set scoringStartDate if not already configured for this cohort
       const currentScoringStart = cohortManager.getScoringStartDate(guild.id);
       let scoringStartUpdated = false;
 
-      if (res.earliestDate && (!currentScoringStart || res.earliestDate < currentScoringStart)) {
+      if (!currentScoringStart && res.earliestDate) {
         cohortManager.setScoringStartDate(guild.id, res.earliestDate);
         scoringStartUpdated = true;
       }

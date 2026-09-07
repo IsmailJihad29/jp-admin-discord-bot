@@ -7,7 +7,7 @@ const Logger = require('../utils/logger');
 const cohortManager = require('../config/cohortManager');
 
 class GasClient {
-  static async request(guildId, action, data = {}, retries = 3) {
+  static async request(guildId, action, data = {}, retries = 3, timeoutMs = null) {
     const cohort = cohortManager.getCohort(guildId);
     const gasUrl = cohort ? cohort.gasUrl : process.env.DEFAULT_GAS_URL;
     const secret = cohort ? cohort.gasSecret : process.env.DEFAULT_GAS_SECRET;
@@ -34,7 +34,7 @@ class GasClient {
       attempt++;
       try {
         const response = await axios.post(gasUrl, payload, {
-          timeout: 60000,
+          timeout: timeoutMs || (action === 'syncHistoricalAttendance' ? 120000 : 60000),
           headers: {
             'Content-Type': 'application/json'
           }
@@ -215,7 +215,7 @@ class GasClient {
   }
 
   static async syncHistoricalAttendance(guildId, options = {}) {
-    return this.request(guildId, 'syncHistoricalAttendance', options);
+    return this.request(guildId, 'syncHistoricalAttendance', options, 2, 120000);
   }
 
   static async getHolidays(guildId) {
