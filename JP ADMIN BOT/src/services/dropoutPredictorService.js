@@ -77,13 +77,17 @@ class DropoutPredictorService {
       const attRecord = attendanceMap.get(discordId);
       const studentScore = scoreMap.get(discordId) || { totalPoints: 0, details: '' };
 
-      // Signal 1: Attendance Absences in last 5 sessions
+      // Signal 1: Attendance Absences in last 5 sessions (filtered by student attendance start date)
       let absences = 0;
       let presentCount = 0;
       let leavesCount = 0;
 
+      const studentStartDate = studentScore.attendanceStartDate || scoringStartDate;
+
       if (attRecord && attRecord.sessions) {
         recentDates.forEach(d => {
+          const normDate = DateTimeUtil.normalizeDateStr(d);
+          if (normDate && normDate < studentStartDate) return;
           const mark = attRecord.sessions[d];
           if (mark === 'A') absences++;
           else if (mark === 'P') presentCount++;

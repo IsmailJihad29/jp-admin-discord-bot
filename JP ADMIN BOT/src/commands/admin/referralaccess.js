@@ -31,25 +31,29 @@ module.exports = {
           return loading.edit({ content: `❌ Student <@${target.id}> not found in active roster.` });
         }
 
-        const statusIcon = student.isLocked ? '🔴 **LOCKED** (Negative score or >3 absences)' : '🟢 **ELIGIBLE & UNLOCKED**';
+        const statusIcon = student.isLocked ? '🔴 **LOCKED**' : '🟢 **ELIGIBLE & UNLOCKED**';
         const embed = student.isLocked
           ? Embeds.warning(
               `Referral Access Status: Locked`,
               `• **Student:** <@${target.id}> (${student.name})\n` +
+              `• **Attendance Start Date:** \`${student.attendanceStartDate || 'Recent'}\`\n` +
               `• **Referral Channel Access:** ${statusIcon}\n` +
               `• **Reason for Lock:** ${student.lockReason}\n\n` +
-              `📊 **Performance Details:**\n` +
+              `📊 **Performance Details (Since Start Date):**\n` +
               `• ⭐ **Total Score:** **${student.totalPoints} pts** ${student.hasNegativeScore ? '❌ *(Negative)*' : '✅'}\n` +
-              `• 📅 **Weekly Absences:** **${student.absentDays}/5 days** ${student.hasExcessiveAbsences ? '❌ *(>3 days)*' : '✅'}\n\n` +
+              `• 📅 **Consecutive Absences:** **${student.consecutiveAbsences} days** ${student.has3ConsecutiveAbsences ? '❌ *(>= 3 days)*' : '✅'}\n` +
+              `• 🗓️ **Weekly Absences:** **${student.totalAbsencesInWeek} days**\n\n` +
               `*Student has role \`${constants.ROLES.REFERRAL_RESTRICTED}\` hiding #resume-needed.*`
             )
           : Embeds.success(
               `Referral Access Status: Eligible`,
               `• **Student:** <@${target.id}> (${student.name})\n` +
+              `• **Attendance Start Date:** \`${student.attendanceStartDate || 'Recent'}\`\n` +
               `• **Referral Channel Access:** ${statusIcon}\n\n` +
-              `📊 **Performance Details:**\n` +
+              `📊 **Performance Details (Since Start Date):**\n` +
               `• ⭐ **Total Score:** **${student.totalPoints} pts** (>= 0)\n` +
-              `• 📅 **Weekly Absences:** **${student.absentDays}/5 days** (<= 3)\n\n` +
+              `• 📅 **Consecutive Absences:** **${student.consecutiveAbsences} days** (< 3)\n` +
+              `• 🗓️ **Weekly Absences:** **${student.totalAbsencesInWeek} days**\n\n` +
               `*Student has full access to #resume-needed.*`
             );
 
@@ -103,15 +107,15 @@ module.exports = {
       const eligible = evaluated.filter(s => !s.isLocked);
 
       const lockedList = locked.length > 0
-        ? locked.map(s => `• 🔴 <@${s.discordId}> (${s.name}) — **${s.totalPoints} pts** | Absences: **${s.absentDays}/5** (${s.lockReason})`).join('\n')
+        ? locked.map(s => `• 🔴 <@${s.discordId}> (${s.name}) — **${s.totalPoints} pts** | Streak Absences: **${s.consecutiveAbsences}d** (${s.lockReason})`).join('\n')
         : '✅ None! All active students are eligible.';
 
-      const eligibleList = eligible.slice(0, 10).map(s => `• 🟢 <@${s.discordId}> (${s.name}) — **${s.totalPoints} pts** | Absences: **${s.absentDays}/5**`).join('\n');
+      const eligibleList = eligible.slice(0, 10).map(s => `• 🟢 <@${s.discordId}> (${s.name}) — **${s.totalPoints} pts** | Streak Absences: **${s.consecutiveAbsences}d**`).join('\n');
 
       const embed = Embeds.info(
         "Resume Referral Access Audit",
-        `**Official Rule:** Students with **negative score (< 0 pts)** or **more than 3 absences (> 3 days)** lose access to **#resume-needed**.\n` +
-        `*(All students with 0 points or positive points and <= 3 absences have full access)*\n\n` +
+        `**Official Rule:** Students with **negative score (< 0 pts)** or **3 consecutive absences (>= 3 days)** lose access to **#resume-needed** (calculated strictly from each student's attendance start date).\n` +
+        `*(All students with 0 points or positive points and < 3 consecutive absences have full access)*\n\n` +
         `🔒 **Restricted Students (${locked.length} students):**\n${lockedList}\n\n` +
         `🟢 **Eligible Students (${eligible.length} students):**\n${eligibleList}\n\n` +
         `💡 *Run \`!referralaccess sync\` to apply locks, or \`!referralaccess unlockall\` to reset all locks.*`

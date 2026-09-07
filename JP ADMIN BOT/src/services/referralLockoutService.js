@@ -11,6 +11,7 @@
 const { PermissionFlagsBits } = require('discord.js');
 const GasClient = require('./gasClient');
 const ScoringService = require('./scoringService');
+const DateTimeUtil = require('../utils/dateTime');
 const Embeds = require('../utils/embedBuilder');
 const Logger = require('../utils/logger');
 const ChannelHelper = require('../utils/channelHelper');
@@ -19,8 +20,8 @@ const constants = require('../config/constants');
 class ReferralLockoutService {
   /**
    * Evaluates all active students based on:
-   * - Total Score (restricted if < 0)
-   * - Consecutive Absences (restricted if >= 3 consecutive days)
+   * - Total Score (restricted if < 0) strictly from their individual attendance start date
+   * - Consecutive Absences (restricted if >= 3 consecutive days) strictly from their start date
    */
   static async evaluateCohortPerformance(guildId) {
     const cohortManager = require('../config/cohortManager');
@@ -48,26 +49,46 @@ class ReferralLockoutService {
       const studentScore = scoreMap.get(discordId) || { totalPoints: 0 };
       const totalPoints = Number(studentScore.totalPoints) || 0;
 
+      // Student's individual start date (when their attendance began)
+      const studentStartDate = studentScore.attendanceStartDate ||
+        cohortManager.getScoringStartDate(guildId) ||
+        '2026-09-06';
+
       // Calculate CONSECUTIVE absences working backwards from the latest session
+      // STRICT RULE: Do not look at any dates before the student's attendance start date!
       let consecutiveAbsences = 0;
       let totalAbsencesInWeek = 0;
+      let totalAbsencesSinceStart = 0;
 
       if (attRecord && attRecord.sessions) {
-        // Consecutive absences check
+        // Consecutive absences check (backwards from latest session)
         for (let i = sortedDates.length - 1; i >= 0; i--) {
-          const d = sortedDates[i];
-          const mark = attRecord.sessions[d];
+          const rawCol = sortedDates[i];
+          const normDate = DateTimeUtil.normalizeDateStr(rawCol);
+          if (studentStartDate && normDate && normDate < studentStartDate) {
+            break; // Stop immediately: do not count absences before the student's attendance start date
+          }
+          const mark = attRecord.sessions[rawCol];
           if (mark === 'A') {
             consecutiveAbsences++;
           } else if (mark === 'P' || mark === 'L' || mark === 'H') {
-            break; // Active presence breaks the consecutive absence streak
+            break; // Active presence or excused break the consecutive absence streak
           }
         }
 
-        // Recent 5 days total absences
+        // Recent 5 days total absences (filtered by studentStartDate)
         const recent5 = sortedDates.slice(-5);
-        recent5.forEach(d => {
-          if (attRecord.sessions[d] === 'A') totalAbsencesInWeek++;
+        recent5.forEach(rawCol => {
+          const normDate = DateTimeUtil.normalizeDateStr(rawCol);
+          if (studentStartDate && normDate && normDate < studentStartDate) return;
+          if (attRecord.sessions[rawCol] === 'A') totalAbsencesInWeek++;
+        });
+
+        // Total absences since student's start date
+        sortedDates.forEach(rawCol => {
+          const normDate = DateTimeUtil.normalizeDateStr(rawCol);
+          if (studentStartDate && normDate && normDate < studentStartDate) return;
+          if (attRecord.sessions[rawCol] === 'A') totalAbsencesSinceStart++;
         });
       }
 
@@ -90,11 +111,15 @@ class ReferralLockoutService {
       evaluatedStudents.push({
         discordId,
         name: student.name || student.username,
+        attendanceStartDate: studentStartDate,
         consecutiveAbsences,
+        absentDays: totalAbsencesInWeek,
         totalAbsencesInWeek,
+        totalAbsencesSinceStart,
         totalPoints,
         hasNegativeScore,
         has3ConsecutiveAbsences,
+        hasExcessiveAbsences: consecutiveAbsences >= 3 || totalAbsencesInWeek > 3,
         lockReason,
         isLocked
       });
