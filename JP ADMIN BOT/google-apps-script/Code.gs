@@ -781,39 +781,78 @@ function syncAttendanceRosterStudents(ss) {
   var attRange = attendanceSheet.getDataRange();
   var attValues = attRange.getValues();
 
-  var existingIds = {};
-  var existingEmails = {};
-
-  for (var r = 1; r < attValues.length; r++) {
-    var dId = String(attValues[r][3] || "").trim();
-    var email = String(attValues[r][1] || "").toLowerCase().trim();
-    if (dId) existingIds[dId] = true;
-    if (email) existingEmails[email] = true;
-  }
-
-  var newRows = [];
-  var lastCol = Math.max(attendanceSheet.getLastColumn(), 6);
-
+  // Index active Bot_Map profiles
+  var botMapById = {};
+  var botMapByEmail = {};
   for (var b = 1; b < botMapValues.length; b++) {
     var bEmail = String(botMapValues[b][0] || "").toLowerCase().trim();
     var bName = String(botMapValues[b][1] || "").trim();
+    var bUser = String(botMapValues[b][2] || "").trim();
     var bId = String(botMapValues[b][3] || "").trim();
     var bStatus = String(botMapValues[b][4] || "active").toLowerCase().trim();
     var bPhone = String(botMapValues[b][7] || "").trim();
 
-    // STRICT EXCLUSION: Never add Supervisors, Mentors, or Staff to student Attendance matrix!
+    // STRICT EXCLUSION: Never add Supervisors, Mentors, or Staff
     if (bStatus === 'supervisor' || bStatus === 'mentor' || bStatus === 'staff') {
       continue;
     }
 
-    if ((bId && !existingIds[bId]) || (bEmail && !existingEmails[bEmail])) {
-      var row = [bName, bEmail, bPhone, bId, bStatus, ""];
+    var studentObj = {
+      email: bEmail,
+      name: bName,
+      username: bUser,
+      discordId: bId,
+      status: bStatus,
+      phone: bPhone
+    };
+
+    if (bId) botMapById[bId] = studentObj;
+    if (bEmail) botMapByEmail[bEmail] = studentObj;
+  }
+
+  var existingIds = {};
+  var existingEmails = {};
+  var needsAttRewrite = false;
+
+  // 1. Update existing Attendance rows with canonical Name, Email, Phone, Discord ID, Status from Bot_Map
+  for (var r = 1; r < attValues.length; r++) {
+    var dId = String(attValues[r][3] || "").trim();
+    var email = String(attValues[r][1] || "").toLowerCase().trim();
+
+    var matchedBm = (dId && botMapById[dId]) || (email && botMapByEmail[email]);
+    if (matchedBm) {
+      if (attValues[r][0] !== matchedBm.name) { attValues[r][0] = matchedBm.name; needsAttRewrite = true; }
+      if (attValues[r][1] !== matchedBm.email) { attValues[r][1] = matchedBm.email; needsAttRewrite = true; }
+      if (matchedBm.phone && attValues[r][2] !== matchedBm.phone) { attValues[r][2] = matchedBm.phone; needsAttRewrite = true; }
+      if (matchedBm.discordId && attValues[r][3] !== matchedBm.discordId) { attValues[r][3] = matchedBm.discordId; needsAttRewrite = true; }
+      if (matchedBm.status && attValues[r][4] !== matchedBm.status) { attValues[r][4] = matchedBm.status; needsAttRewrite = true; }
+
+      if (matchedBm.discordId) existingIds[matchedBm.discordId] = true;
+      if (matchedBm.email) existingEmails[matchedBm.email] = true;
+    } else {
+      if (dId) existingIds[dId] = true;
+      if (email) existingEmails[email] = true;
+    }
+  }
+
+  if (needsAttRewrite && attValues.length > 1) {
+    attendanceSheet.getRange(1, 1, attValues.length, attValues[0].length).setValues(attValues);
+  }
+
+  // 2. Append any missing active students from Bot_Map
+  var newRows = [];
+  var lastCol = Math.max(attendanceSheet.getLastColumn(), 6);
+
+  for (var bIdKey in botMapById) {
+    var bm = botMapById[bIdKey];
+    if (bm.status === 'active' && !existingIds[bm.discordId] && (!bm.email || !existingEmails[bm.email])) {
+      var row = [bm.name, bm.email, bm.phone, bm.discordId, bm.status, ""];
       while (row.length < lastCol) {
         row.push("A");
       }
       newRows.push(row);
-      if (bId) existingIds[bId] = true;
-      if (bEmail) existingEmails[bEmail] = true;
+      if (bm.discordId) existingIds[bm.discordId] = true;
+      if (bm.email) existingEmails[bm.email] = true;
     }
   }
 
@@ -1181,7 +1220,138 @@ function applyApprovedLeaveToAttendance(ss, discordId, email, startDate, endDate
 }
 
 /**
+ * Fast & robust index of active students from Bot_Map.
+ * Indexes students strictly by Email, normalized Discord Username, and Discord ID.
+ * Excludes supervisors, mentors, and staff.
+ */
+function buildStudentIndexFromBotMap(ss) {
+  var botMapSheet = ss.getSheetByName("Bot_Map");
+  if (!botMapSheet) return null;
+
+  var botMapValues = botMapSheet.getDataRange().getValues();
+  var students = [];
+  var emailToDiscordId = {};
+  var byEmail = {};
+  var byUsername = {};
+  var byDiscordId = {};
+
+  for (var i = 1; i < botMapValues.length; i++) {
+    var email = String(botMapValues[i][0] || "").toLowerCase().trim();
+    var name = String(botMapValues[i][1] || "").trim();
+    var uName = String(botMapValues[i][2] || "").toLowerCase().trim().replace(/^@/, '').split('#')[0].trim();
+    var dId = String(botMapValues[i][3] || "").trim();
+    var status = String(botMapValues[i][4] || "active").toLowerCase().trim();
+
+    // STRICT EXCLUSION: Supervisors, Mentors, Staff are not students
+    if (status === 'supervisor' || status === 'mentor' || status === 'staff') {
+      continue;
+    }
+
+    if (email && dId) emailToDiscordId[email] = dId;
+
+    if ((email || dId) && status === 'active') {
+      var sObj = {
+        email: email,
+        name: name,
+        username: uName,
+        discordId: dId,
+        rowIdx: i + 1
+      };
+      students.push(sObj);
+
+      if (email) byEmail[email] = sObj;
+      if (uName) byUsername[uName] = sObj;
+      if (dId) byDiscordId[dId] = sObj;
+    }
+  }
+
+  return {
+    students: students,
+    emailToDiscordId: emailToDiscordId,
+    byEmail: byEmail,
+    byUsername: byUsername,
+    byDiscordId: byDiscordId
+  };
+}
+
+/**
+ * Detects Email and Discord column indices from form header row.
+ */
+function detectFormHeaders(headerRow) {
+  var res = { emailCol: -1, discordCol: -1 };
+  if (!headerRow || !headerRow.length) return res;
+
+  for (var h = 0; h < headerRow.length; h++) {
+    var hStr = String(headerRow[h] || "").toLowerCase().trim();
+    if (res.emailCol === -1 && (hStr.indexOf("email") !== -1 || hStr.indexOf("mail") !== -1)) {
+      res.emailCol = h;
+    }
+    if (res.discordCol === -1 && (hStr.indexOf("discord") !== -1 || hStr.indexOf("handle") !== -1 || hStr.indexOf("username") !== -1)) {
+      res.discordCol = h;
+    }
+  }
+  return res;
+}
+
+/**
+ * Matches a Google Form submission row strictly by Email or Discord Username / Snowflake ID.
+ * Avoids any spelling errors in student names or arbitrary text matching.
+ */
+function matchStudentFromFormRow(row, headersInfo, studentIndex) {
+  if (!row || !studentIndex) return null;
+
+  // 1. Direct match on dedicated Email column
+  if (headersInfo && headersInfo.emailCol !== -1 && headersInfo.emailCol < row.length) {
+    var em = String(row[headersInfo.emailCol] || "").toLowerCase().trim();
+    if (em && studentIndex.byEmail[em]) {
+      return studentIndex.byEmail[em];
+    }
+  }
+
+  // 2. Direct match on dedicated Discord column
+  if (headersInfo && headersInfo.discordCol !== -1 && headersInfo.discordCol < row.length) {
+    var discRaw = String(row[headersInfo.discordCol] || "").trim();
+    var discClean = discRaw.toLowerCase().replace(/^@/, '').split('#')[0].trim();
+    var discNum = discRaw.replace(/[^0-9]/g, '');
+
+    if (discClean && studentIndex.byUsername[discClean]) {
+      return studentIndex.byUsername[discClean];
+    }
+    if (discNum && discNum.length >= 17 && studentIndex.byDiscordId[discNum]) {
+      return studentIndex.byDiscordId[discNum];
+    }
+  }
+
+  // 3. Fallback: check each cell strictly for valid email or Discord username/snowflake ID
+  for (var c = 0; c < row.length; c++) {
+    var raw = String(row[c] || "").trim();
+    if (!raw) continue;
+    var lower = raw.toLowerCase();
+
+    // Valid email match
+    if (lower.indexOf('@') !== -1 && studentIndex.byEmail[lower]) {
+      return studentIndex.byEmail[lower];
+    }
+
+    // Normalized discord username match
+    var cleanU = lower.replace(/^@/, '').split('#')[0].trim();
+    if (cleanU && studentIndex.byUsername[cleanU]) {
+      return studentIndex.byUsername[cleanU];
+    }
+
+    // Discord snowflake ID match
+    var numOnly = raw.replace(/[^0-9]/g, '');
+    if (numOnly.length >= 17 && studentIndex.byDiscordId[numOnly]) {
+      return studentIndex.byDiscordId[numOnly];
+    }
+  }
+
+  return null;
+}
+
+/**
  * Daily Attendance Scanner (+1 Present, -1 Absent, 0 Leave)
+ * Matches students strictly by Email and Discord Username/ID from Bot_Map.
  */
 function scanDailyAttendanceFromForm(ss, dateStr) {
   var targetDate = dateStr || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
@@ -1204,33 +1374,27 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
     attendanceSheet = ss.getSheetByName("Attendance");
   }
 
-  // 1. Get active students from Bot_Map
-  var botMapValues = botMapSheet.getDataRange().getValues();
-  var emailToDiscordId = {};
-  var students = [];
-  for (var i = 1; i < botMapValues.length; i++) {
-    var email = String(botMapValues[i][0] || "").toLowerCase().trim();
-    var name = String(botMapValues[i][1] || "").trim();
-    var uName = String(botMapValues[i][2] || "").toLowerCase().trim().replace(/^@/, '').split('#')[0].trim();
-    var dId = String(botMapValues[i][3] || "").trim();
-    var status = String(botMapValues[i][4] || "active").toLowerCase().trim();
-    var phone = String(botMapValues[i][7] || "").replace(/[^0-9]/g, '');
-
-    if (email && dId) emailToDiscordId[email] = dId;
-
-    if ((email || dId) && status === 'active') {
-      students.push({ email: email, name: name, username: uName, discordId: dId, phone: phone, rowIdx: i + 1 });
-    }
+  // 1. Get active students index from Bot_Map
+  var studentIndex = buildStudentIndexFromBotMap(ss);
+  if (!studentIndex || studentIndex.students.length === 0) {
+    return {
+      status: "FAILED",
+      error: "No active students found in Bot_Map."
+    };
   }
+  var students = studentIndex.students;
+  var emailToDiscordId = studentIndex.emailToDiscordId;
 
-  // 2. Approved leaves lookup (robust multi-key matching)
+  // 2. Approved leaves lookup
   var leaveMap = getApprovedLeavesMap(ss, targetDate);
 
-  // 3. Scan Form responses with robust date parsing & matching
-  var presentSubmissions = {};
+  // 3. Scan Form responses strictly by Email & Discord Username/ID
+  var presentStudentMap = {};
   var matchedSubmissionsCount = 0;
   if (formSheet && formSheet.getLastRow() > 1) {
     var formValues = formSheet.getDataRange().getValues();
+    var headersInfo = detectFormHeaders(formValues[0]);
+
     for (var f = 1; f < formValues.length; f++) {
       var row = formValues[f];
       var rawTimestamp = row[0];
@@ -1238,16 +1402,12 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
 
       if (rowDate === targetDate || !dateStr) {
         matchedSubmissionsCount++;
-        for (var c = 0; c < row.length; c++) {
-          var rawVal = String(row[c] || "").trim();
-          if (rawVal) {
-            var cellLower = rawVal.toLowerCase().replace(/^@/, '').split('#')[0].trim();
-            presentSubmissions[cellLower] = true;
-            var numOnly = rawVal.replace(/[^0-9]/g, '');
-            if (numOnly.length >= 7) {
-              presentSubmissions[numOnly] = true;
-            }
-          }
+        var matched = matchStudentFromFormRow(row, headersInfo, studentIndex);
+        if (matched) {
+          if (matched.discordId) presentStudentMap[matched.discordId] = true;
+          if (matched.email) presentStudentMap[matched.email] = true;
+          if (matched.username) presentStudentMap[matched.username] = true;
+          presentStudentMap[String(matched.rowIdx)] = true;
         }
       }
     }
@@ -1261,12 +1421,12 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
 
   students.forEach(function(s) {
     var resolvedDiscordId = s.discordId || (s.email && emailToDiscordId[s.email]) || "";
-    var isPresent = false;
-    if (s.email && presentSubmissions[s.email]) isPresent = true;
-    if (s.username && presentSubmissions[s.username]) isPresent = true;
-    if (resolvedDiscordId && presentSubmissions[resolvedDiscordId]) isPresent = true;
-    if (s.phone && presentSubmissions[s.phone]) isPresent = true;
-    if (s.name && presentSubmissions[s.name.toLowerCase()]) isPresent = true;
+    var isPresent = Boolean(
+      (s.discordId && presentStudentMap[s.discordId]) ||
+      (s.email && presentStudentMap[s.email]) ||
+      (s.username && presentStudentMap[s.username]) ||
+      presentStudentMap[String(s.rowIdx)]
+    );
 
     var isLeave = leaveMap.isLeave(s, targetDate) || Boolean(resolvedDiscordId && leaveMap.byId[resolvedDiscordId]);
 
@@ -1314,6 +1474,7 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
 
 /**
  * Morning Attendance Scanner (+1 Present, -1 Absent, 0 Leave, 0 Optional)
+ * Matches students strictly by Email and Discord Username/ID from Bot_Map.
  */
 function scanMorningAttendanceFromForm(ss, dateStr, options) {
   var targetDate = dateStr || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
@@ -1330,7 +1491,6 @@ function scanMorningAttendanceFromForm(ss, dateStr, options) {
   var formSheet = findSheetByPattern(ss, ["Morning Attendance", "Morning_Attendance"], /morning/i);
   var botMapSheet = ss.getSheetByName("Bot_Map");
   var attendanceSheet = ss.getSheetByName("Attendance");
-  var leaveSheet = ss.getSheetByName("Leave_Requests");
 
   if (!formSheet) {
     var tabNames = ss.getSheets().map(function(s) { return s.getName(); });
@@ -1346,34 +1506,27 @@ function scanMorningAttendanceFromForm(ss, dateStr, options) {
     attendanceSheet = ss.getSheetByName("Attendance");
   }
 
-  // 1. Get active students from Bot_Map
-  // Build email-to-discordId map for students who submitted via email in the form
-  var botMapValues = botMapSheet.getDataRange().getValues();
-  var emailToDiscordId = {};
-  var students = [];
-  for (var i = 1; i < botMapValues.length; i++) {
-    var email = String(botMapValues[i][0] || "").toLowerCase().trim();
-    var name = String(botMapValues[i][1] || "").trim();
-    var uName = String(botMapValues[i][2] || "").toLowerCase().trim().replace(/^@/, '').split('#')[0].trim();
-    var dId = String(botMapValues[i][3] || "").trim();
-    var status = String(botMapValues[i][4] || "active").toLowerCase().trim();
-    var phone = String(botMapValues[i][7] || "").replace(/[^0-9]/g, '');
-
-    if (email && dId) emailToDiscordId[email] = dId;
-
-    if ((email || dId) && status === 'active') {
-      students.push({ email: email, name: name, username: uName, discordId: dId, phone: phone, rowIdx: i + 1 });
-    }
+  // 1. Get active students index from Bot_Map
+  var studentIndex = buildStudentIndexFromBotMap(ss);
+  if (!studentIndex || studentIndex.students.length === 0) {
+    return {
+      status: "FAILED",
+      error: "No active students found in Bot_Map."
+    };
   }
+  var students = studentIndex.students;
+  var emailToDiscordId = studentIndex.emailToDiscordId;
 
-  // 2. Approved leaves lookup (robust multi-key matching)
+  // 2. Approved leaves lookup
   var leaveMap = getApprovedLeavesMap(ss, targetDate);
 
-  // 3. Scan Morning Form responses with robust date parsing & matching
-  var presentSubmissions = {};
+  // 3. Scan Morning Form responses strictly by Email & Discord Username/ID
+  var presentStudentMap = {};
   var matchedSubmissionsCount = 0;
   if (formSheet && formSheet.getLastRow() > 1) {
     var formValues = formSheet.getDataRange().getValues();
+    var headersInfo = detectFormHeaders(formValues[0]);
+
     for (var f = 1; f < formValues.length; f++) {
       var row = formValues[f];
       var rawTimestamp = row[0];
@@ -1381,16 +1534,12 @@ function scanMorningAttendanceFromForm(ss, dateStr, options) {
 
       if (rowDate === targetDate || !dateStr) {
         matchedSubmissionsCount++;
-        for (var c = 0; c < row.length; c++) {
-          var rawVal = String(row[c] || "").trim();
-          if (rawVal) {
-            var cellLower = rawVal.toLowerCase().replace(/^@/, '').split('#')[0].trim();
-            presentSubmissions[cellLower] = true;
-            var numOnly = rawVal.replace(/[^0-9]/g, '');
-            if (numOnly.length >= 7) {
-              presentSubmissions[numOnly] = true;
-            }
-          }
+        var matched = matchStudentFromFormRow(row, headersInfo, studentIndex);
+        if (matched) {
+          if (matched.discordId) presentStudentMap[matched.discordId] = true;
+          if (matched.email) presentStudentMap[matched.email] = true;
+          if (matched.username) presentStudentMap[matched.username] = true;
+          presentStudentMap[String(matched.rowIdx)] = true;
         }
       }
     }
@@ -1405,12 +1554,12 @@ function scanMorningAttendanceFromForm(ss, dateStr, options) {
 
   students.forEach(function(s) {
     var resolvedDiscordId = s.discordId || (s.email && emailToDiscordId[s.email]) || "";
-    var isPresent = false;
-    if (s.email && presentSubmissions[s.email]) isPresent = true;
-    if (s.username && presentSubmissions[s.username]) isPresent = true;
-    if (resolvedDiscordId && presentSubmissions[resolvedDiscordId]) isPresent = true;
-    if (s.phone && presentSubmissions[s.phone]) isPresent = true;
-    if (s.name && presentSubmissions[s.name.toLowerCase()]) isPresent = true;
+    var isPresent = Boolean(
+      (s.discordId && presentStudentMap[s.discordId]) ||
+      (s.email && presentStudentMap[s.email]) ||
+      (s.username && presentStudentMap[s.username]) ||
+      presentStudentMap[String(s.rowIdx)]
+    );
 
     var isExempt = Boolean(
       (resolvedDiscordId && exemptMap[resolvedDiscordId]) ||
@@ -1578,35 +1727,27 @@ function scanCustomAttendanceFromForm(ss, customTabName, dateStr, customLabel) {
     attendanceSheet = ss.getSheetByName("Attendance");
   }
 
-  // 1. Get active students from Bot_Map (excluding staff/mentors/supervisors)
-  // Build email-to-discordId lookup so form email submissions can be resolved to discordId
-  var botMapValues = botMapSheet.getDataRange().getValues();
-  var emailToDiscordId = {};
-  var students = [];
-  for (var i = 1; i < botMapValues.length; i++) {
-    var email = String(botMapValues[i][0] || "").toLowerCase().trim();
-    var name = String(botMapValues[i][1] || "").trim();
-    var uName = String(botMapValues[i][2] || "").toLowerCase().trim().replace(/^@/, '').split('#')[0].trim();
-    var dId = String(botMapValues[i][3] || "").trim();
-    var status = String(botMapValues[i][4] || "active").toLowerCase().trim();
-    var phone = String(botMapValues[i][7] || "").replace(/[^0-9]/g, '');
-
-    if (email && dId) emailToDiscordId[email] = dId;
-
-    // Include students who have email (even without discordId yet) — email match from form will resolve them
-    if ((email || dId) && status === 'active') {
-      students.push({ email: email, name: name, username: uName, discordId: dId, phone: phone, rowIdx: i + 1 });
-    }
+  // 1. Get active students index from Bot_Map
+  var studentIndex = buildStudentIndexFromBotMap(ss);
+  if (!studentIndex || studentIndex.students.length === 0) {
+    return {
+      status: "FAILED",
+      error: "No active students found in Bot_Map."
+    };
   }
+  var students = studentIndex.students;
+  var emailToDiscordId = studentIndex.emailToDiscordId;
 
-  // 2. Approved leaves lookup (robust multi-key matching)
+  // 2. Approved leaves lookup
   var leaveMap = getApprovedLeavesMap(ss, targetDate);
 
-  // 3. Scan custom form responses
-  var presentSubmissions = {};
+  // 3. Scan custom form responses strictly by Email & Discord Username/ID
+  var presentStudentMap = {};
   var matchedSubmissionsCount = 0;
   if (formSheet && formSheet.getLastRow() > 1) {
     var formValues = formSheet.getDataRange().getValues();
+    var headersInfo = detectFormHeaders(formValues[0]);
+
     for (var f = 1; f < formValues.length; f++) {
       var row = formValues[f];
       var rawTimestamp = row[0];
@@ -1614,16 +1755,12 @@ function scanCustomAttendanceFromForm(ss, customTabName, dateStr, customLabel) {
 
       if (rowDate === targetDate || !dateStr) {
         matchedSubmissionsCount++;
-        for (var c = 0; c < row.length; c++) {
-          var rawVal = String(row[c] || "").trim();
-          if (rawVal) {
-            var cellLower = rawVal.toLowerCase().replace(/^@/, '').split('#')[0].trim();
-            presentSubmissions[cellLower] = true;
-            var numOnly = rawVal.replace(/[^0-9]/g, '');
-            if (numOnly.length >= 7) {
-              presentSubmissions[numOnly] = true;
-            }
-          }
+        var matched = matchStudentFromFormRow(row, headersInfo, studentIndex);
+        if (matched) {
+          if (matched.discordId) presentStudentMap[matched.discordId] = true;
+          if (matched.email) presentStudentMap[matched.email] = true;
+          if (matched.username) presentStudentMap[matched.username] = true;
+          presentStudentMap[String(matched.rowIdx)] = true;
         }
       }
     }
@@ -1636,14 +1773,13 @@ function scanCustomAttendanceFromForm(ss, customTabName, dateStr, customLabel) {
   var attendanceRecords = [];
 
   students.forEach(function(s) {
-    // Resolve discordId via email lookup from Bot_Map if not directly available
     var resolvedDiscordId = s.discordId || (s.email && emailToDiscordId[s.email]) || "";
-    var isPresent = false;
-    if (s.email && presentSubmissions[s.email]) isPresent = true;
-    if (s.username && presentSubmissions[s.username]) isPresent = true;
-    if (resolvedDiscordId && presentSubmissions[resolvedDiscordId]) isPresent = true;
-    if (s.phone && presentSubmissions[s.phone]) isPresent = true;
-    if (s.name && presentSubmissions[s.name.toLowerCase()]) isPresent = true;
+    var isPresent = Boolean(
+      (s.discordId && presentStudentMap[s.discordId]) ||
+      (s.email && presentStudentMap[s.email]) ||
+      (s.username && presentStudentMap[s.username]) ||
+      presentStudentMap[String(s.rowIdx)]
+    );
 
     var isLeave = leaveMap.isLeave(s, targetDate) || Boolean(resolvedDiscordId && leaveMap.byId[resolvedDiscordId]);
 
@@ -1721,25 +1857,12 @@ function syncHistoricalAttendanceFromForms(ss, options) {
     attendanceSheet = ss.getSheetByName("Attendance");
   }
 
-  // 1. Get active students from Bot_Map
-  var botMapValues = botMapSheet.getDataRange().getValues();
-  var students = [];
-  for (var i = 1; i < botMapValues.length; i++) {
-    var email = String(botMapValues[i][0] || "").toLowerCase().trim();
-    var name = String(botMapValues[i][1] || "").trim();
-    var uName = String(botMapValues[i][2] || "").toLowerCase().trim().replace(/^@/, '').split('#')[0].trim();
-    var dId = String(botMapValues[i][3] || "").trim();
-    var status = String(botMapValues[i][4] || "active").toLowerCase().trim();
-    var phone = String(botMapValues[i][7] || "").replace(/[^0-9]/g, '');
-
-    if (dId && status === 'active') {
-      students.push({ email: email, name: name, username: uName, discordId: dId, phone: phone });
-    }
-  }
-
-  if (students.length === 0) {
+  // 1. Get active students index from Bot_Map
+  var studentIndex = buildStudentIndexFromBotMap(ss);
+  if (!studentIndex || studentIndex.students.length === 0) {
     return { status: "FAILED", error: "No active students found in Bot_Map." };
   }
+  var students = studentIndex.students;
 
   // 2. Approved leaves lookup (robust multi-key matching)
   var leaveMap = getApprovedLeavesMap(ss);
@@ -1758,6 +1881,7 @@ function syncHistoricalAttendanceFromForms(ss, options) {
     var dailySheet = findSheetByPattern(ss, ["Daily Attendance", "Daily_Attendance", "Attendance Responses", "Form Responses 1"], /(daily|attendance\s*response|form\s*response)/i);
     if (dailySheet && dailySheet.getLastRow() > 1) {
       var dailyValues = dailySheet.getDataRange().getValues();
+      var dailyHeadersInfo = detectFormHeaders(dailyValues[0]);
       var dailyByDate = {};
       for (var f = 1; f < dailyValues.length; f++) {
         var row = dailyValues[f];
@@ -1771,14 +1895,12 @@ function syncHistoricalAttendanceFromForms(ss, options) {
           dailyByDate[rowDate] = {};
         }
 
-        for (var c = 0; c < row.length; c++) {
-          var cellVal = String(row[c] || "").trim();
-          if (cellVal) {
-            var cellLower = cellVal.toLowerCase().replace(/^@/, '').split('#')[0].trim();
-            dailyByDate[rowDate][cellLower] = true;
-            var numOnly = cellVal.replace(/[^0-9]/g, '');
-            if (numOnly.length >= 7) dailyByDate[rowDate][numOnly] = true;
-          }
+        var matched = matchStudentFromFormRow(row, dailyHeadersInfo, studentIndex);
+        if (matched) {
+          if (matched.discordId) dailyByDate[rowDate][matched.discordId] = true;
+          if (matched.email) dailyByDate[rowDate][matched.email] = true;
+          if (matched.username) dailyByDate[rowDate][matched.username] = true;
+          dailyByDate[rowDate][String(matched.rowIdx)] = true;
         }
       }
 
@@ -1786,11 +1908,12 @@ function syncHistoricalAttendanceFromForms(ss, options) {
       sortedDailyDates.forEach(function(dDate) {
         var pMap = dailyByDate[dDate];
         var records = students.map(function(s) {
-          var isP = (s.email && pMap[s.email]) ||
-                    (s.username && pMap[s.username]) ||
-                    (s.discordId && pMap[s.discordId]) ||
-                    (s.phone && pMap[s.phone]) ||
-                    (s.name && pMap[s.name.toLowerCase()]);
+          var isP = Boolean(
+            (s.discordId && pMap[s.discordId]) ||
+            (s.email && pMap[s.email]) ||
+            (s.username && pMap[s.username]) ||
+            pMap[String(s.rowIdx)]
+          );
           var status = 'A';
           if (isP) status = 'P';
           else if (isStudentOnLeave(s, dDate)) status = 'L';
@@ -1808,6 +1931,7 @@ function syncHistoricalAttendanceFromForms(ss, options) {
     var morningSheet = findSheetByPattern(ss, ["Morning Attendance", "Morning_Attendance"], /morning/i);
     if (morningSheet && morningSheet.getLastRow() > 1) {
       var morningValues = morningSheet.getDataRange().getValues();
+      var morningHeadersInfo = detectFormHeaders(morningValues[0]);
       var morningByDate = {};
       for (var mf = 1; mf < morningValues.length; mf++) {
         var mRow = morningValues[mf];
@@ -1821,14 +1945,12 @@ function syncHistoricalAttendanceFromForms(ss, options) {
           morningByDate[mRowDate] = {};
         }
 
-        for (var mc = 0; mc < mRow.length; mc++) {
-          var mCellVal = String(mRow[mc] || "").trim();
-          if (mCellVal) {
-            var mCellLower = mCellVal.toLowerCase().replace(/^@/, '').split('#')[0].trim();
-            morningByDate[mRowDate][mCellLower] = true;
-            var mNumOnly = mCellVal.replace(/[^0-9]/g, '');
-            if (mNumOnly.length >= 7) morningByDate[mRowDate][mNumOnly] = true;
-          }
+        var mMatched = matchStudentFromFormRow(mRow, morningHeadersInfo, studentIndex);
+        if (mMatched) {
+          if (mMatched.discordId) morningByDate[mRowDate][mMatched.discordId] = true;
+          if (mMatched.email) morningByDate[mRowDate][mMatched.email] = true;
+          if (mMatched.username) morningByDate[mRowDate][mMatched.username] = true;
+          morningByDate[mRowDate][String(mMatched.rowIdx)] = true;
         }
       }
 
@@ -1837,12 +1959,16 @@ function syncHistoricalAttendanceFromForms(ss, options) {
         var colHeader = mDate + " (Morning)";
         var mpMap = morningByDate[mDate];
         var records = students.map(function(s) {
-          var isP = (s.email && mpMap[s.email]) ||
-                    (s.username && mpMap[s.username]) ||
-                    (s.discordId && mpMap[s.discordId]) ||
-                    (s.phone && mpMap[s.phone]) ||
-                    (s.name && mpMap[s.name.toLowerCase()]);
-          var isExempt = Boolean((s.discordId && exemptMap[s.discordId]) || (s.username && exemptMap[s.username]));
+          var isP = Boolean(
+            (s.discordId && mpMap[s.discordId]) ||
+            (s.email && mpMap[s.email]) ||
+            (s.username && mpMap[s.username]) ||
+            mpMap[String(s.rowIdx)]
+          );
+          var isExempt = Boolean(
+            (s.discordId && exemptMap[s.discordId]) ||
+            (s.username && exemptMap[s.username])
+          );
           var status = 'A';
           if (isP) status = 'P';
           else if (isStudentOnLeave(s, mDate)) status = 'L';
@@ -1855,6 +1981,7 @@ function syncHistoricalAttendanceFromForms(ss, options) {
       });
     }
   }
+
 
   // 5. Bulk record all sessions into Attendance sheet in a single fast operation
   if (sessionsToRecord.length > 0) {
@@ -2593,10 +2720,12 @@ function recordInterviewEntry(ss, data) {
   var now = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
   var loggedDate = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
 
+  var profile = findStudentProfile(ss, { discordId: data.discordId, name: data.name, email: data.email });
+
   sheet.appendRow([
     loggedDate,
-    data.name || "",
-    data.discordId || "",
+    profile.name || data.name || "",
+    profile.discordId || data.discordId || "",
     data.company || "Company",
     data.serial || 1,
     data.interviewDate || loggedDate,
@@ -2706,11 +2835,13 @@ function recordJobTaskEntry(ss, data) {
   var taskId = data.taskId || "TASK-" + Utilities.getUuid().substring(0, 8).toUpperCase();
   var timestamp = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
 
+  var profile = findStudentProfile(ss, { discordId: data.discordId, name: data.studentName });
+
   sheet.appendRow([
     taskId,
     timestamp,
-    data.discordId || "",
-    data.studentName || "",
+    profile.discordId || data.discordId || "",
+    profile.name || data.studentName || "",
     data.company || "",
     data.role || "",
     data.techStack || "",

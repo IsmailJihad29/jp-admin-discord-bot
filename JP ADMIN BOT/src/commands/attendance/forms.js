@@ -49,6 +49,8 @@ module.exports = {
 
       try {
         const todayDate = DateTimeUtil.getTodayDateStr();
+        // First scan and record today's responses from Google Form
+        await GasClient.scanDailyAttendance(guild.id, todayDate).catch(() => {});
         // Read attendance records from Sheet
         const attData = await GasClient.getAttendance(guild.id);
         const rows = attData.rows || [];
