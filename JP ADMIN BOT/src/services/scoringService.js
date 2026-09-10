@@ -41,24 +41,46 @@ class ScoringService {
     const cohortTarget = scoring.jobTarget || constants.SCORING.DEFAULT_JOB_TARGET;
 
     // Fetch data from Apps Script backend for the core components (or use cachedData if provided)
-    let rosterRes, jobsRes, interviewsRes, tasksRes, attendanceRes;
+    let rosterRes, jobsRes, interviewsRes, tasksRes, attendanceRes, leavesRes;
     if (options.cachedData) {
       rosterRes = options.cachedData.rosterRes;
       jobsRes = options.cachedData.jobsRes;
       interviewsRes = options.cachedData.interviewsRes;
       tasksRes = options.cachedData.tasksRes;
       attendanceRes = options.cachedData.attendanceRes;
+      leavesRes = options.cachedData.leavesRes;
     } else {
-      [rosterRes, jobsRes, interviewsRes, tasksRes, attendanceRes] = await Promise.all([
+      [rosterRes, jobsRes, interviewsRes, tasksRes, attendanceRes, leavesRes] = await Promise.all([
         GasClient.getRoster(guildId).catch(() => ({ students: [] })),
         GasClient.getJobsDaily(guildId, weeklyOnly ? 7 : 90).catch(() => ({ jobs: [] })),
         GasClient.getInterviews(guildId, 90).catch(() => ({ interviews: [] })),
         GasClient.getJobTasks(guildId).catch(() => ({ tasks: [] })),
-        GasClient.getAttendance(guildId).catch(() => ({ rows: [] }))
+        GasClient.getAttendance(guildId).catch(() => ({ rows: [] })),
+        GasClient.getLeaves(guildId).catch(() => ({ leaves: [] }))
       ]);
     }
 
     const isInCurrentWeek = (dateStr) => DateTimeUtil.isInCurrentWeek(dateStr);
+
+    // Build approved leaves helper to protect students on leave from deductions and streak resets
+    const approvedLeaves = (leavesRes?.leaves || []).filter(l => String(l.status || '').toUpperCase() === 'APPROVED');
+    const isStudentOnApprovedLeave = (student, dateYMD) => {
+      if (!student || !dateYMD) return false;
+      const dId = String(student.discordId || '').trim();
+      const em = String(student.email || '').toLowerCase().trim();
+      const un = String(student.username || '').toLowerCase().trim();
+      const nm = String(student.name || '').toLowerCase().trim();
+      return approvedLeaves.some(l => {
+        const lStart = DateTimeUtil.normalizeDateStr(l.startDate);
+        const lEnd = DateTimeUtil.normalizeDateStr(l.endDate) || lStart;
+        if (!lStart || dateYMD < lStart || dateYMD > lEnd) return false;
+        if (dId && l.discordId && dId === String(l.discordId).trim()) return true;
+        if (em && l.email && em === String(l.email).toLowerCase().trim()) return true;
+        if (nm && l.name && nm === String(l.name).toLowerCase().trim()) return true;
+        if (un && l.name && un === String(l.name).toLowerCase().trim()) return true;
+        return false;
+      });
+    };
 
     const isExcludedStatus = (st) => {
       const clean = String(st || "").toLowerCase().trim();
@@ -219,28 +241,54 @@ class ScoringService {
             }
 
             const isMorningSession = sessionDate.toLowerCase().includes('morning');
-            if (isMorningSession && cohortManager.isMorningOff(guildId, datePart)) {
-              // Morning Basecamp is OFF for this day — 0 points for all students
-              return;
+            if (isMorningSession) {
+              // 1. If morning attendance feature is turned OFF for cohort -> 0 points for everyone
+              if (!cohortManager.isFeatureEnabled(guildId, 'morning_attendance')) {
+                return;
+              }
+              // 2. If Morning Basecamp is OFF for this day -> 0 points for all students
+              if (cohortManager.isMorningOff(guildId, datePart)) {
+                return;
+              }
+            } else {
+              // Non-morning session: check if daily_attendance feature is enabled
+              if (!cohortManager.isFeatureEnabled(guildId, 'daily_attendance')) {
+                return;
+              }
             }
 
             const m = String(mark || "").toUpperCase().trim();
-            if (m === 'OFF' || m === '0' || m === 'EXCUSED' || m === 'L' || m === 'LEAVE' || m === '') {
+            if (m === 'OFF' || m === '0' || m === 'EXCUSED' || m === 'L' || m === 'LEAVE' || m === 'OPT' || m === 'EXEMPT' || m === '') {
               // 0 points
               return;
+            }
+
+            // If morning session and student is marked morning optional, missing is never penalized!
+            if (isMorningSession && cohortManager.isMorningOptional(guildId, student.discordId, guild)) {
+              if (m === 'A' || m === 'ABSENT' || m.startsWith('A')) {
+                return; // 0 points, no deduction
+              }
+            }
+
+            // If student has an approved leave covering this date, NEVER penalize!
+            if (isStudentOnApprovedLeave(student, datePart)) {
+              return; // Excused leave: exactly 0 points, no deduction
             }
 
             if (m === 'P' || m === 'PRESENT' || m.startsWith('P')) {
               student.attendancePoints += scoring.attendancePresent;
             } else if (m === 'A' || m === 'ABSENT' || m.startsWith('A')) {
               student.attendancePoints += scoring.attendanceAbsent;
-            } // Leave / Off is 0 points
+            } // Leave / Off / Optional is 0 points
           });
         } else if (!weeklyOnly) {
-          if (att.status === 'P' || att.status === 'PRESENT') {
-            student.attendancePoints += scoring.attendancePresent;
-          } else if (att.status === 'A' || att.status === 'ABSENT') {
-            student.attendancePoints += scoring.attendanceAbsent;
+          const isAttFeatureOn = cohortManager.isFeatureEnabled(guildId, 'daily_attendance');
+          if (isAttFeatureOn) {
+            if (att.status === 'P' || att.status === 'PRESENT') {
+              student.attendancePoints += scoring.attendancePresent;
+            } else if (att.status === 'A' || att.status === 'ABSENT') {
+              student.attendancePoints += scoring.attendanceAbsent;
+            }
           }
         }
       }
@@ -306,15 +354,28 @@ class ScoringService {
         const count = Number(jobDay.count) || 0;
         student.jobTotalApps += count;
 
-        let dayPts = ScoringService.calculateDailyJobScore(count, cohortTarget);
-        // If it is TODAY and before the night cutoff (23:30), do not penalize incomplete jobs prematurely
-        if (jobDay.normDate === todayStr && isBeforeNightCutoff && dayPts < 0) {
-          dayPts = 0; // Day is still in progress; student has until 23:30 to apply
+        const onLeave = jobDay.status === 'ON_LEAVE' || isStudentOnApprovedLeave(student, jobDay.normDate);
+
+        let dayPts = 0;
+        if (onLeave) {
+          // Leave Protected: 0 points (never penalize on approved leave!)
+          dayPts = 0;
+        } else {
+          dayPts = ScoringService.calculateDailyJobScore(count, cohortTarget);
+          // If it is TODAY and before the night cutoff (23:30), do not penalize incomplete jobs prematurely
+          if (jobDay.normDate === todayStr && isBeforeNightCutoff && dayPts < 0) {
+            dayPts = 0; // Day is still in progress; student has until 23:30 to apply
+          }
         }
         student.jobPoints += dayPts;
 
-        // Track consecutive days where target was hit
-        if (count >= cohortTarget) {
+        // Track consecutive days where target was hit (protect streak through approved leave!)
+        if (onLeave) {
+          // Leave Protected: maintain previous streak and advance date
+          if (prevDate) {
+            prevDate = jobDay.normDate;
+          }
+        } else if (count >= cohortTarget) {
           if (prevDate) {
             const prev = new Date(prevDate);
             const curr = new Date(jobDay.normDate || prevDate);
@@ -415,6 +476,152 @@ class ScoringService {
     // Sort descending by totalPoints
     activeResults.sort((a, b) => b.totalPoints - a.totalPoints);
     return activeResults;
+  }
+
+  /**
+   * Calculates and saves full student scores snapshot (both Weekly and Lifetime)
+   * into Google Sheets 'Scores' tab and appends latest transactions to 'Point_Ledger'.
+   */
+  static async syncScoresToSheet(guildId, guild = null, options = {}) {
+    const Logger = require('../utils/logger');
+    try {
+      // 1. Fetch raw data once to reuse across weekly and lifetime calculations
+      let cachedData = options.cachedData;
+      if (!cachedData) {
+        const [rosterRes, jobsRes, interviewsRes, tasksRes, attendanceRes, leavesRes] = await Promise.all([
+          GasClient.getRoster(guildId).catch(() => ({ students: [] })),
+          GasClient.getJobsDaily(guildId, 90).catch(() => ({ jobs: [] })),
+          GasClient.getInterviews(guildId, 90).catch(() => ({ interviews: [] })),
+          GasClient.getJobTasks(guildId).catch(() => ({ tasks: [] })),
+          GasClient.getAttendance(guildId).catch(() => ({ rows: [] })),
+          GasClient.getLeaves(guildId).catch(() => ({ leaves: [] }))
+        ]);
+        cachedData = { rosterRes, jobsRes, interviewsRes, tasksRes, attendanceRes, leavesRes };
+      }
+
+      // 2. Compute Weekly and Lifetime standings
+      const [weeklyStandings, lifetimeStandings] = await Promise.all([
+        this.calculateRTBR(guildId, guild, { weeklyOnly: true, cachedData }),
+        this.calculateRTBR(guildId, guild, { weeklyOnly: false, cachedData })
+      ]);
+
+      const weeklyMap = new Map(weeklyStandings.map((s, idx) => [s.discordId, { ...s, rank: idx + 1 }]));
+      const nowStr = new Date().toISOString();
+
+      const approvedLeavesList = (cachedData.leavesRes?.leaves || []).filter(l => String(l.status || '').toUpperCase() === 'APPROVED');
+      const isApprovedLeaveDay = (student, dYmd) => {
+        if (!student || !dYmd) return false;
+        const dId = String(student.discordId || '').trim();
+        const em = String(student.email || '').toLowerCase().trim();
+        const nm = String(student.name || '').toLowerCase().trim();
+        return approvedLeavesList.some(l => {
+          const lStart = DateTimeUtil.normalizeDateStr(l.startDate);
+          const lEnd = DateTimeUtil.normalizeDateStr(l.endDate) || lStart;
+          if (!lStart || dYmd < lStart || dYmd > lEnd) return false;
+          if (dId && l.discordId && dId === String(l.discordId).trim()) return true;
+          if (em && l.email && em === String(l.email).toLowerCase().trim()) return true;
+          if (nm && l.name && nm === String(l.name).toLowerCase().trim()) return true;
+          return false;
+        });
+      };
+
+      // 3. Build Scores tab rows
+      const attendanceRows = cachedData.attendanceRes?.rows || [];
+      const scoreRows = lifetimeStandings.map((s, idx) => {
+        const weekly = weeklyMap.get(s.discordId);
+
+        // Calculate weekly attendance marks for active/inactive evaluation
+        const attRow = attendanceRows.find(r => r.discordId === s.discordId);
+        let weekPresent = 0, weekAbsent = 0, weekLeave = 0;
+        if (attRow && attRow.sessions) {
+          Object.entries(attRow.sessions).forEach(([sessionDate, mark]) => {
+            const datePart = DateTimeUtil.normalizeDateStr(sessionDate);
+            if (!datePart || !DateTimeUtil.isInCurrentWeek(datePart)) return;
+            const m = String(mark || "").toUpperCase().trim();
+            if (m === 'P' || m.startsWith('P')) weekPresent++;
+            else if (m === 'A' || m.startsWith('A')) {
+              // If on approved leave, count as Leave NOT Absent!
+              if (isApprovedLeaveDay(s, datePart)) {
+                weekLeave++;
+              } else {
+                weekAbsent++;
+              }
+            }
+            else if (m === 'L' || m.startsWith('L') || m === 'LEAVE' || m === 'EXCUSED') weekLeave++;
+          });
+        }
+
+        // Evaluate dynamic weekly status (Weekly based Active / Inactive / At Risk)
+        const rosterStatus = String(s.status || "").toLowerCase().trim();
+        let weeklyStatus = "Active";
+        if (rosterStatus === 'inactive' || rosterStatus === 'dropped') {
+          weeklyStatus = "Inactive";
+        } else if (weekAbsent >= 3) {
+          weeklyStatus = "At Risk (3+ Absences)";
+        } else if (weekly && weekly.totalPoints < 0 && (weekPresent + weekAbsent) >= 3) {
+          weeklyStatus = "At Risk (Low Points)";
+        } else if (weekAbsent >= 2) {
+          weeklyStatus = "Needs Attention (2 Absences)";
+        } else if (
+          weekPresent === 0 &&
+          weekAbsent === 0 &&
+          weekLeave === 0 &&
+          (!weekly || (weekly.jobTotalApps === 0 && weekly.interviewCount === 0 && weekly.taskCount === 0))
+        ) {
+          weeklyStatus = "Inactive (No Activity)";
+        } else {
+          weeklyStatus = "Active";
+        }
+
+        return {
+          discordId: s.discordId,
+          name: s.name,
+          email: s.email,
+          weeklyPoints: weekly ? weekly.totalPoints : 0,
+          lifetimePoints: s.totalPoints,
+          weeklyAttendance: weekly ? weekly.attendancePoints : 0,
+          weeklyJobs: weekly ? weekly.jobPoints : 0,
+          weeklyStreak: weekly ? weekly.streakBonus : 0,
+          weeklyInterviews: weekly ? weekly.interviewPoints : 0,
+          weeklyTasks: weekly ? weekly.taskPoints : 0,
+          lifetimeAttendance: s.attendancePoints,
+          lifetimeJobs: s.jobPoints,
+          lifetimeStreak: s.streakBonus,
+          lifetimeInterviews: s.interviewPoints,
+          lifetimeTasks: s.taskPoints,
+          weeklyRank: weekly ? weekly.rank : null,
+          lifetimeRank: idx + 1,
+          weeklyStatus: weeklyStatus,
+          status: weeklyStatus,
+          lastUpdated: nowStr
+        };
+      });
+
+      // 4. Build Point Ledger audit entries
+      const ledgerEntries = options.ledgerEntries || [];
+
+      // 5. Send to Google Apps Script
+      const res = await GasClient.syncScores(guildId, {
+        scores: scoreRows,
+        ledgerEntries: ledgerEntries
+      });
+
+      Logger.info(`[ScoresSync] Successfully synced ${scoreRows.length} student scores to Google Sheets for guild ${guildId}.`);
+      return { success: true, scoresCount: scoreRows.length, gasResponse: res };
+    } catch (err) {
+      Logger.error(`[ScoresSync] Failed to sync scores for guild ${guildId}:`, err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Appends a point transaction to the Point_Ledger sheet
+   */
+  static async recordPointTransaction(guildId, entry) {
+    return GasClient.syncScores(guildId, {
+      scores: [],
+      ledgerEntries: [entry]
+    });
   }
 }
 

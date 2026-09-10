@@ -57,6 +57,12 @@ module.exports = {
     }
 
     // --- 2. Build Student Health Report ---
+    let force = false;
+    if (args.some(a => a.toLowerCase() === 'refresh' || a.toLowerCase() === 'force')) {
+      force = true;
+      args = args.filter(a => a.toLowerCase() !== 'refresh' && a.toLowerCase() !== 'force');
+    }
+
     const cohortManager = require('../../config/cohortManager');
     const isMentor = cohortManager.isMentor(guild.id, message.member);
 
@@ -82,11 +88,13 @@ module.exports = {
     }
 
     const targetDiscordId = targetMember.id;
-
-    const loading = await message.reply(`🔍 Compiling real-time performance & health scorecard for <@${targetDiscordId}>...`);
+    const loadingMsg = force
+      ? `🔄 Recalculating live performance & syncing to Google Sheets for <@${targetDiscordId}>...`
+      : `🔍 Retrieving scorecard for <@${targetDiscordId}>...`;
+    const loading = await message.reply(loadingMsg);
 
     try {
-      const scorecard = await module.exports.buildStudentHealthEmbed(guild, targetMember);
+      const scorecard = await module.exports.buildStudentHealthEmbed(guild, targetMember, { force });
       await loading.edit({ content: null, embeds: [scorecard] });
     } catch (err) {
       await loading.edit({ content: null, embeds: [Embeds.error("Health Check Error", err.message)] });
@@ -96,18 +104,96 @@ module.exports = {
   /**
    * Generates a comprehensive health scorecard Embed for a student
    */
-  async buildStudentHealthEmbed(guild, member) {
+  async buildStudentHealthEmbed(guild, member, options = {}) {
     const discordId = member.id;
     const guildId = guild.id;
+    const force = options.force === true;
 
-    // Fetch live data from Apps Script backend
-    const [rosterRes, attendanceRes, jobsRes, tasksRes, interviewsRes, sheetRes] = await Promise.all([
+    // ── 1. Check Pre-calculated Google Sheets Tab (Scores) First ──
+    if (!force) {
+      try {
+        const [scoresRes, ledgerRes] = await Promise.all([
+          GasClient.getScores(guildId, discordId).catch(() => ({ found: false })),
+          GasClient.getPointLedger(guildId, discordId, 5).catch(() => ({ found: false, entries: [] }))
+        ]);
+
+        if (scoresRes && scoresRes.found && scoresRes.score) {
+          const s = scoresRes.score;
+          const studentName = s.name || member.displayName || member.user.username;
+          const email = s.email || "Not linked in Bot_Map";
+          const { weekSunday, weekThursday } = DateTimeUtil.getCurrentWeekRange('Asia/Dhaka');
+
+          // Referral Lockout Status
+          const hasRestrictionRole = member?.roles?.cache?.some
+            ? member.roles.cache.some(r =>
+                r.name.toLowerCase() === (constants.ROLES.REFERRAL_RESTRICTED || 'referral restricted').toLowerCase()
+              )
+            : false;
+          const referralStatusStr = hasRestrictionRole
+            ? "Restricted (Score < 0 or >= 3 absences)"
+            : "Unlocked (Eligible for Referrals)";
+
+          // Dynamic Weekly Status indicator
+          const weeklyStatus = s.weeklyStatus || s.status || "Active";
+          let statusBadge = "🟢 Active";
+          if (weeklyStatus.toLowerCase().includes("3+")) statusBadge = `🔴 ${weeklyStatus}`;
+          else if (weeklyStatus.toLowerCase().includes("risk")) statusBadge = `🔴 ${weeklyStatus}`;
+          else if (weeklyStatus.toLowerCase().includes("attention")) statusBadge = `🟡 ${weeklyStatus}`;
+          else if (weeklyStatus.toLowerCase().includes("inactive")) statusBadge = `⚪ ${weeklyStatus}`;
+          else statusBadge = `🟢 ${weeklyStatus}`;
+
+          // Format recent Point Ledger entries
+          let ledgerSection = "";
+          if (ledgerRes.entries && ledgerRes.entries.length > 0) {
+            ledgerSection = "\n\n**📜 Recent Point Transactions (Audit Ledger)**\n" +
+              ledgerRes.entries.map(e => {
+                const pts = Number(e.pointsAwarded) || 0;
+                const sign = pts >= 0 ? `+${pts}` : `${pts}`;
+                const dt = e.date || (e.timestamp ? String(e.timestamp).split(' ')[0] : '');
+                return `• \`${dt}\` **${sign} pts** [${e.category || 'General'}] *${e.eventSource || ''}* ${e.remarks ? `— ${e.remarks}` : ''}`;
+              }).join('\n');
+          }
+
+          const weeklyRankStr = s.weeklyRank ? `#${s.weeklyRank}` : "Unranked";
+          const lifetimeRankStr = s.lifetimeRank ? `#${s.lifetimeRank}` : "Unranked";
+
+          return Embeds.info(
+            `Student Health Scorecard · ${studentName}`,
+            `**Student Profile**\n` +
+            `• **Name:** **${studentName}** (<@${discordId}>)\n` +
+            `• **Email:** \`${email}\`\n` +
+            `• **Status:** ${statusBadge} | **Referral Drive:** ${referralStatusStr}\n\n` +
+            `**Weekly Performance** (${weekSunday} to ${weekThursday})\n` +
+            `• **Weekly Total Score:** **${s.weeklyPoints >= 0 ? '+' : ''}${s.weeklyPoints} pts** (Rank: **${weeklyRankStr}**)\n` +
+            `• **Job Applications:** \`${s.weeklyJobs >= 0 ? '+' : ''}${s.weeklyJobs} pts\` | **Streak:** \`+${s.weeklyStreak} pts\`\n` +
+            `• **Attendance:** \`${s.weeklyAttendance >= 0 ? '+' : ''}${s.weeklyAttendance} pts\`\n` +
+            `• **Interviews:** \`+${s.weeklyInterviews} pts\`\n` +
+            `• **Job Tasks:** \`${s.weeklyTasks >= 0 ? '+' : ''}${s.weeklyTasks} pts\`\n\n` +
+            `**Lifetime Career Summary**\n` +
+            `• **Lifetime Total Score:** **${s.lifetimePoints >= 0 ? '+' : ''}${s.lifetimePoints} pts** (Rank: **${lifetimeRankStr}**)\n` +
+            `• **Total Job Points:** \`${s.lifetimeJobs >= 0 ? '+' : ''}${s.lifetimeJobs} pts\` | **Streak:** \`+${s.lifetimeStreak} pts\`\n` +
+            `• **Total Attendance Points:** \`${s.lifetimeAttendance >= 0 ? '+' : ''}${s.lifetimeAttendance} pts\`\n` +
+            `• **Total Interviews:** \`+${s.lifetimeInterviews} pts\`\n` +
+            `• **Total Job Tasks:** \`${s.lifetimeTasks >= 0 ? '+' : ''}${s.lifetimeTasks} pts\`` +
+            `${ledgerSection}\n\n` +
+            `*(⚡ Instant Sheet Cache · Last synced: ${s.lastUpdated || 'Recently'} · Run \`!myhealth refresh\` for live recalculation)*`,
+            `JP ADMIN ${constants.BOT_VERSION} · ${DateTimeUtil.getFullTimestamp()}`
+          );
+        }
+      } catch (e) {
+        // Fall back to live calculation
+      }
+    }
+
+    // ── 2. Fallback: Full Real-time Multi-Sheet Calculation ──
+    const [rosterRes, attendanceRes, jobsRes, tasksRes, interviewsRes, sheetRes, fallbackLedgerRes] = await Promise.all([
       GasClient.getRoster(guildId).catch(() => ({ students: [] })),
       GasClient.getAttendance(guildId).catch(() => ({ rows: [], dates: [] })),
       GasClient.getJobsDaily(guildId, 90).catch(() => ({ jobs: [] })),
       GasClient.getJobTasks(guildId).catch(() => ({ tasks: [] })),
       GasClient.getInterviews(guildId, 90).catch(() => ({ interviews: [] })),
-      GasClient.request(guildId, 'getJobSheets', {}).catch(() => ({ sheets: [] }))
+      GasClient.request(guildId, 'getJobSheets', {}).catch(() => ({ sheets: [] })),
+      GasClient.getPointLedger(guildId, discordId, 5).catch(() => ({ found: false, entries: [] }))
     ]);
 
     const cachedData = { rosterRes, attendanceRes, jobsRes, tasksRes, interviewsRes };
@@ -289,6 +375,21 @@ module.exports = {
     const lifetimeAdjLine = lifetimeAdj ? `• **Manual Adjustment:** \`${lifetimeAdj >= 0 ? '+' : ''}${lifetimeAdj} pts\`\n` : '';
     const sheetNoteLine = sheetNote ? `  ↳ ${sheetNote}\n` : '';
 
+    // Append recent point transactions if available
+    let ledgerSection = "";
+    if (fallbackLedgerRes && fallbackLedgerRes.entries && fallbackLedgerRes.entries.length > 0) {
+      ledgerSection = "\n\n**📜 Recent Point Transactions (Audit Ledger)**\n" +
+        fallbackLedgerRes.entries.map(e => {
+          const pts = Number(e.pointsAwarded) || 0;
+          const sign = pts >= 0 ? `+${pts}` : `${pts}`;
+          const dt = e.date || (e.timestamp ? String(e.timestamp).split(' ')[0] : '');
+          return `• \`${dt}\` **${sign} pts** [${e.category || 'General'}] *${e.eventSource || ''}* ${e.remarks ? `— ${e.remarks}` : ''}`;
+        }).join('\n');
+    }
+
+    // Trigger background sync to Google Sheets Scores tab so subsequent checks are instant
+    ScoringService.syncScoresToSheet(guildId, guild, { cachedData }).catch(() => {});
+
     return Embeds.info(
       `Student Health Scorecard · ${studentName}`,
       `**Student Profile**\n` +
@@ -310,7 +411,9 @@ module.exports = {
       `• **Total Attendance:** ${lifetimeAttendanceLabel} \`(${lifetimeAttPoints >= 0 ? '+' : ''}${lifetimeAttPoints} pts)\` *(P: ${lifetimePresent} | A: ${lifetimeAbsent} | L: ${lifetimeLeave})*\n` +
       `• **Total Interviews:** ${lifetimeInterviewCount} calls \`(+${lifetimeIntPoints} pts)\`\n` +
       `• **Total Job Tasks:** ${lifetimeTaskCount} completed \`(${lifetimeTaskPoints >= 0 ? '+' : ''}${lifetimeTaskPoints} pts)\`\n` +
-      `${lifetimeAdjLine}`,
+      `${lifetimeAdjLine}` +
+      `${ledgerSection}\n\n` +
+      `*(🔄 Live Recalculation · Synced to Scores sheet)*`,
       `JP ADMIN ${constants.BOT_VERSION} · ${DateTimeUtil.getFullTimestamp()}`
     );
   }

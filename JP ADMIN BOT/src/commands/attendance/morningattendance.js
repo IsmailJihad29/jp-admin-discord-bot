@@ -21,14 +21,20 @@ module.exports = {
     const guildId = message.guild.id;
     const todayDate = DateTimeUtil.getTodayDateStr();
 
-    // 1. Delegate subcommands: off, on, status, list to morningoff command
+    // 1. Delegate subcommands: optional, exempt, opt to morningoptional command
     const firstArg = args[0]?.toLowerCase();
+    if (firstArg === 'optional' || firstArg === 'exempt' || firstArg === 'opt') {
+      const morningOptCmd = require('./morningoptional');
+      return morningOptCmd.execute(message, args.slice(1), client);
+    }
+
+    // 2. Delegate subcommands: off, on, status, list to morningoff command
     if (firstArg === 'off' || firstArg === 'on' || firstArg === 'status' || firstArg === 'list' || firstArg === 'remove' || firstArg === 'resume') {
       const morningOffCmd = require('./morningoff');
       return morningOffCmd.execute(message, args, client);
     }
 
-    // 2. Delegate sync / all / backfill to syncattendance command
+    // 3. Delegate sync / all / backfill to syncattendance command
     if (firstArg === 'all' || firstArg === 'sync' || firstArg === 'backfill') {
       const syncCmd = require('./syncattendance');
       return syncCmd.execute(message, ['morning', ...args.slice(1)], client);
@@ -45,6 +51,20 @@ module.exports = {
         targetDate = todayDate;
         if (args[1]?.toLowerCase() === 'force') isForce = true;
       }
+    }
+
+    // Check if Morning Attendance feature is disabled via Feature Toggle
+    if (!isForce && !cohortManager.isFeatureEnabled(guildId, 'morning_attendance')) {
+      return message.reply({
+        embeds: [Embeds.warning(
+          "Morning Attendance Feature is OFF 🔴",
+          `⚠️ **Morning Attendance tracking is currently disabled for this server.**\n\n` +
+          `• 12:00 PM auto-scans and morning attendance score calculations are deactivated.\n\n` +
+          `💡 **Options:**\n` +
+          `• To re-enable morning attendance feature: \`!feature on morning_attendance\`\n` +
+          `• To force scan this date anyway: \`!morningattendance ${targetDate} force\``
+        )]
+      });
     }
 
     // Check if Morning Basecamp is marked OFF for target date
@@ -64,7 +84,19 @@ module.exports = {
     const loading = await message.reply(`🌅 **Scanning 'Morning Attendance' Google Form tab for \`${targetDate}\`...**`);
 
     try {
-      const res = await GasClient.scanMorningAttendance(guildId, targetDate);
+      // Collect all exempt/optional student Discord IDs
+      const rawExempt = cohortManager.getMorningOptionalDiscordIds(guildId) || [];
+      const exemptSet = new Set(rawExempt);
+      if (message.guild && message.guild.members) {
+        message.guild.members.cache.forEach(member => {
+          if (cohortManager.isMorningOptional(guildId, member, message.guild)) {
+            exemptSet.add(member.id);
+          }
+        });
+      }
+      const exemptDiscordIds = Array.from(exemptSet);
+
+      const res = await GasClient.scanMorningAttendance(guildId, targetDate, { exemptDiscordIds });
 
       if (!res || res.status !== 'SUCCESS') {
         return loading.edit({

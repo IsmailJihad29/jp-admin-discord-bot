@@ -15,6 +15,7 @@ const JobScraperService = require('../services/jobScraperService');
 const Embeds = require('../utils/embedBuilder');
 const Logger = require('../utils/logger');
 const DateTimeUtil = require('../utils/dateTime');
+const cohortManager = require('../config/cohortManager');
 const ChannelHelper = require('../utils/channelHelper');
 
 class MessageHandler {
@@ -30,20 +31,23 @@ class MessageHandler {
 
     // 2. Handle #interview-preparation Posts (AI Interview Prep & +5 points)
     if (ChannelHelper.isChannel(message, 'INTERVIEW_UPDATE')) {
-      await this.handleInterviewPost(message);
+      if (cohortManager.isFeatureEnabled(message.guild.id, 'interview_hub')) {
+        await this.handleInterviewPost(message);
+      }
       return;
     }
 
     // 3. Handle #job-task-update Posts (Job Task Announcement & +1 point)
     if (ChannelHelper.isChannel(message, 'JOB_TASK')) {
-      await this.handleJobTaskPost(message);
+      if (cohortManager.isFeatureEnabled(message.guild.id, 'job_task_hub')) {
+        await this.handleJobTaskPost(message);
+      }
       return;
     }
 
     // 3.5 Handle #daily-tasks Posts (Mentor Daily Target & Task Announcement)
     if (ChannelHelper.isChannel(message, 'DAILY_TASK')) {
-      const cohortManager = require('../config/cohortManager');
-      if (cohortManager.isMentor(message.guild.id, message.member)) {
+      if (cohortManager.isFeatureEnabled(message.guild.id, 'daily_task_hub') && cohortManager.isMentor(message.guild.id, message.member)) {
         await this.handleMentorDailyTaskAnnouncement(message);
         return;
       }
@@ -51,13 +55,17 @@ class MessageHandler {
 
     // 4. Handle #job-tracking Sheet Link Shares
     if (ChannelHelper.isChannel(message, 'JOB_TRACKING')) {
-      await this.handleJobSheetPost(message);
+      if (cohortManager.isFeatureEnabled(message.guild.id, 'job_sheet_hub')) {
+        await this.handleJobSheetPost(message);
+      }
       return;
     }
 
     // 5. Handle #leave-request Posts
     if (ChannelHelper.isChannel(message, 'LEAVE_REQUEST')) {
-      await this.handleLeavePost(message);
+      if (cohortManager.isFeatureEnabled(message.guild.id, 'leave_request_hub')) {
+        await this.handleLeavePost(message);
+      }
       return;
     }
   }

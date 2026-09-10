@@ -202,8 +202,8 @@ class GasClient {
     return this.request(guildId, 'scanDailyAttendance', { date });
   }
 
-  static async scanMorningAttendance(guildId, date) {
-    return this.request(guildId, 'scanMorningAttendance', { date });
+  static async scanMorningAttendance(guildId, date, options = {}) {
+    return this.request(guildId, 'scanMorningAttendance', { date, ...options });
   }
 
   static async setMorningOff(guildId, data) {
@@ -260,6 +260,18 @@ class GasClient {
 
   static async getFormTemplates(guildId) {
     return this.request(guildId, 'getFormTemplates');
+  }
+
+  static async syncScores(guildId, payload = {}) {
+    return this.request(guildId, 'syncScores', payload, 3, 60000);
+  }
+
+  static async getScores(guildId, discordId = null) {
+    return this.request(guildId, 'getScores', { discordId });
+  }
+
+  static async getPointLedger(guildId, discordId = null, limit = 10) {
+    return this.request(guildId, 'getPointLedger', { discordId, limit });
   }
 }
 

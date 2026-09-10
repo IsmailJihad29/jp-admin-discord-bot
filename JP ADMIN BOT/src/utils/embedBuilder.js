@@ -159,11 +159,13 @@ class Embeds {
     const present = records.filter(r => r.status === 'P');
     const absent = records.filter(r => r.status === 'A');
     const leave = records.filter(r => r.status === 'L');
+    const optional = records.filter(r => r.status === 'OPT' || r.status === 'EXEMPT');
 
     let desc = `📊 **Summary Statistics:**\n` +
       `• **Present (+1 pt):** ${res.present !== undefined ? res.present : present.length}\n` +
       `• **Absent (-1 pt):** ${res.absent !== undefined ? res.absent : absent.length}\n` +
       `• **Approved Leave (0 pt):** ${res.leave !== undefined ? res.leave : leave.length}\n` +
+      (optional.length > 0 || res.optional ? `• **Morning Optional (0 pt):** ${res.optional !== undefined ? res.optional : optional.length}\n` : '') +
       `• **Total Active Students:** ${res.totalActive || records.length}\n\n` +
       `──────────────────────────────\n` +
       `📋 **Student Attendance & Point Breakdown:**\n\n`;
@@ -181,6 +183,11 @@ class Embeds {
     if (leave.length > 0) {
       desc += `**🌴 Approved Leave (0 pt) [${leave.length}]:**\n` +
         leave.map(r => `• ${r.discordId ? `<@${r.discordId}>` : `**${r.name}**`} — \`0 pt\``).join('\n') + '\n\n';
+    }
+
+    if (optional.length > 0) {
+      desc += `**☕ Morning Optional / Excused (0 pt) [${optional.length}]:**\n` +
+        optional.map(r => `• ${r.discordId ? `<@${r.discordId}>` : `**${r.name}**`} — \`0 pt (Optional)\``).join('\n') + '\n\n';
     }
 
     if (records.length === 0) {

@@ -97,5 +97,32 @@
       "destChannelId": null
     },
     "customChannels": {}
+  },
+  {
+    "serverId": "test_guild_123",
+    "name": "Cohort test_guild_123",
+    "gasUrl": "",
+    "gasSecret": "JP_ADMIN_26",
+    "timezone": "Asia/Dhaka",
+    "supervisors": [],
+    "targets": {
+      "applications": 10
+    },
+    "automation": {
+      "enabled": true,
+      "forwarder": false,
+      "activeWindow": "04:50-23:30"
+    },
+    "features": {},
+    "morningOptional": {
+      "users": [],
+      "roleId": null
+    },
+    "forwarder": {
+      "enabled": false,
+      "sourceChannelId": null,
+      "destChannelId": null
+    },
+    "customChannels": {}
   }
 ]

@@ -52,6 +52,27 @@ class InteractionHandler {
       }
     }
 
+    // 0.2 Feature Toggle Buttons from !features Dashboard
+    if (customId.startsWith('feature_toggle:')) {
+      const cohortManager = require('../config/cohortManager');
+      if (!cohortManager.isMentor(interaction.guild.id, interaction.member)) {
+        return interaction.reply({ content: "❌ Only Mentors & Supervisors can toggle bot features.", ephemeral: true });
+      }
+
+      const featureKey = customId.split(':')[1];
+      cohortManager.toggleFeature(interaction.guild.id, featureKey);
+      
+      const featureCmd = require('../commands/automation/feature');
+      const updated = featureCmd.buildFeatureDashboard(interaction.guild.id);
+      return interaction.update(updated);
+    }
+
+    if (customId === 'feature_refresh:dashboard') {
+      const featureCmd = require('../commands/automation/feature');
+      const updated = featureCmd.buildFeatureDashboard(interaction.guild.id);
+      return interaction.update(updated);
+    }
+
     // 0.5 Mentor Template Publisher Buttons
     if (customId.startsWith('btn_post_tpl_')) {
       const cohortManager = require('../config/cohortManager');
@@ -313,6 +334,12 @@ class InteractionHandler {
             );
 
         await interaction.message.edit({ embeds: [embed], components: [] });
+
+        // Auto-recalculate and sync scores so leave protection is immediately reflected in Scores tab
+        if (isApprove) {
+          const ScoringService = require('../services/scoringService');
+          ScoringService.syncScoresToSheet(interaction.guild.id, interaction.guild).catch(() => {});
+        }
 
         // NOTIFY THE STUDENT VIA DIRECT REPLY IN #leave-request (NO PRIVATE INBOX DM)
         if (studentId) {

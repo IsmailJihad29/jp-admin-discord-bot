@@ -6,6 +6,129 @@ const fs = require('fs');
 const path = require('path');
 const constants = require('./constants');
 
+const DEFAULT_FEATURES = {
+  morning_attendance: {
+    key: 'morning_attendance',
+    name: 'Morning Attendance Scan & Points',
+    description: '12:00 PM auto-scan, manual scan, and morning points calculation (+1/-1)',
+    category: 'Attendance & Briefings',
+    enabled: true,
+    aliases: ['morning', 'morningattendance', 'morning_scan', 'morning_att', 'morn']
+  },
+  daily_attendance: {
+    key: 'daily_attendance',
+    name: 'Daily Attendance Scan & Points',
+    description: '23:45 daily attendance form scan, 3-day inactivity warnings, and score calculation',
+    category: 'Attendance & Briefings',
+    enabled: true,
+    aliases: ['daily', 'dailyattendance', 'attendance', 'daily_scan', 'att']
+  },
+  mentor_briefing: {
+    key: 'mentor_briefing',
+    name: 'Daily Mentor Morning Briefing',
+    description: '09:30 AM daily operations digest posted to #jp-admin',
+    category: 'Attendance & Briefings',
+    enabled: true,
+    aliases: ['briefing', 'adminbriefing', 'morningbriefing']
+  },
+  job_scraper: {
+    key: 'job_scraper',
+    name: 'Daily Job Sheet Scraper',
+    description: '00:05 daily scraping of student job tracker sheets and score calculation',
+    category: 'Job Tracking & Scraper',
+    enabled: true,
+    aliases: ['scraper', 'jobscraper', 'jobs', 'jobtracking', 'job']
+  },
+  task_overdue: {
+    key: 'task_overdue',
+    name: 'Task Overdue Penalty Monitor',
+    description: '00:05 task overdue check and penalty deduction',
+    category: 'Job Tracking & Scraper',
+    enabled: true,
+    aliases: ['tasks', 'taskoverdue', 'overdue', 'task']
+  },
+  job_sheet_hub: {
+    key: 'job_sheet_hub',
+    name: 'Job Sheet Auto-Linker Hub',
+    description: 'Automatic registration of student Google Sheet links shared in #job-tracking',
+    category: 'Job Tracking & Scraper',
+    enabled: true,
+    aliases: ['jobsheet', 'linksheet', 'jobsheets']
+  },
+  interview_hub: {
+    key: 'interview_hub',
+    name: 'Interview Preparation Hub',
+    description: 'Message listener in #interview-preparation with AI interview tips and verification',
+    category: 'Hubs & AI Evaluators',
+    enabled: true,
+    aliases: ['interview', 'interviews', 'interviewprep']
+  },
+  job_task_hub: {
+    key: 'job_task_hub',
+    name: 'Job Task Updates Hub',
+    description: 'Message listener in #job-task-update for coding assignments and submissions',
+    category: 'Hubs & AI Evaluators',
+    enabled: true,
+    aliases: ['jobtask', 'jobtasks']
+  },
+  daily_task_hub: {
+    key: 'daily_task_hub',
+    name: 'Daily Mentor Task Hub',
+    description: 'Message listener in #daily-tasks for mentor target announcements',
+    category: 'Hubs & AI Evaluators',
+    enabled: true,
+    aliases: ['dailytask', 'dailytasks']
+  },
+  leave_request_hub: {
+    key: 'leave_request_hub',
+    name: 'Leave Request Hub',
+    description: 'Message listener in #leave-request for student leave submissions',
+    category: 'Hubs & AI Evaluators',
+    enabled: true,
+    aliases: ['leave', 'leaves', 'leaverequest']
+  },
+  ai_feedback: {
+    key: 'ai_feedback',
+    name: 'Gemini AI Feedback & Advice',
+    description: 'AI-powered evaluation, tips, and interview question answering',
+    category: 'Hubs & AI Evaluators',
+    enabled: true,
+    aliases: ['ai', 'gemini', 'aifeedback']
+  },
+  weekly_closing: {
+    key: 'weekly_closing',
+    name: 'Weekly Closing & Leaderboard',
+    description: 'Thursday night 00:20 weekly closing digest and leaderboard publishing',
+    category: 'Governance & Reports',
+    enabled: true,
+    aliases: ['closing', 'weeklyclosing', 'leaderboard']
+  },
+  dropout_predictor: {
+    key: 'dropout_predictor',
+    name: 'Dropout Predictor & 1-on-1s',
+    description: 'Thursday 18:30 at-risk audit and 1-on-1 scheduling',
+    category: 'Governance & Reports',
+    enabled: true,
+    aliases: ['atrisk', 'risk', 'dropoutpredictor']
+  },
+  referral_lockout: {
+    key: 'referral_lockout',
+    name: 'Referral Lockout Sync',
+    description: 'Automated sync of Active/Inactive roles and #resume-needed access gating',
+    category: 'Governance & Reports',
+    enabled: true,
+    aliases: ['lockout', 'referrallockout', 'referralaccess']
+  },
+  forwarder: {
+    key: 'forwarder',
+    name: 'Announcement Forwarder Engine',
+    description: 'Cross-server announcement broadcasting',
+    category: 'Governance & Reports',
+    enabled: false,
+    aliases: ['forward', 'forwarderengine']
+  }
+};
+
 class CohortManager {
   constructor() {
     this.dataPath = path.join(__dirname, '../../data/cohorts.json');
@@ -63,6 +186,11 @@ class CohortManager {
           enabled: true,
           forwarder: false,
           activeWindow: "04:50-23:30"
+        },
+        features: {},
+        morningOptional: {
+          users: [],
+          roleId: null
         },
         forwarder: {
           enabled: false,
@@ -362,6 +490,192 @@ class CohortManager {
       return cohort.dailyTargets[date];
     }
     return null;
+  }
+
+  // --- Feature Toggle Management ---
+  canonicalizeFeatureKey(rawKey) {
+    if (!rawKey) return null;
+    const clean = String(rawKey).toLowerCase().trim().replace(/[-\s]/g, '_');
+    if (DEFAULT_FEATURES[clean]) return clean;
+
+    for (const [key, def] of Object.entries(DEFAULT_FEATURES)) {
+      if (key === clean) return key;
+      if (def.aliases && def.aliases.some(a => a.toLowerCase().replace(/[-\s]/g, '_') === clean)) {
+        return key;
+      }
+    }
+    return null;
+  }
+
+  isFeatureEnabled(guildId, rawKey) {
+    const canonKey = this.canonicalizeFeatureKey(rawKey);
+    if (!canonKey) return true; // Default unknown feature to enabled
+
+    const cohort = this.getCohort(guildId);
+    if (!cohort) return DEFAULT_FEATURES[canonKey]?.enabled ?? true;
+
+    if (cohort.features && cohort.features[canonKey] !== undefined) {
+      return Boolean(cohort.features[canonKey]);
+    }
+
+    return DEFAULT_FEATURES[canonKey]?.enabled ?? true;
+  }
+
+  setFeature(guildId, rawKey, enabled) {
+    const canonKey = this.canonicalizeFeatureKey(rawKey);
+    if (!canonKey) return null;
+
+    const cohort = this.getCohort(guildId);
+    cohort.features = cohort.features || {};
+    cohort.features[canonKey] = Boolean(enabled);
+    this.saveToDisk();
+
+    return {
+      key: canonKey,
+      name: DEFAULT_FEATURES[canonKey].name,
+      category: DEFAULT_FEATURES[canonKey].category,
+      enabled: cohort.features[canonKey]
+    };
+  }
+
+  toggleFeature(guildId, rawKey) {
+    const canonKey = this.canonicalizeFeatureKey(rawKey);
+    if (!canonKey) return null;
+
+    const current = this.isFeatureEnabled(guildId, canonKey);
+    return this.setFeature(guildId, canonKey, !current);
+  }
+
+  getAllFeatures(guildId) {
+    const cohort = this.getCohort(guildId);
+    const result = [];
+
+    for (const [key, def] of Object.entries(DEFAULT_FEATURES)) {
+      const isEnabled = cohort?.features && cohort.features[key] !== undefined
+        ? Boolean(cohort.features[key])
+        : def.enabled;
+
+      result.push({
+        key: key,
+        name: def.name,
+        description: def.description,
+        category: def.category,
+        enabled: isEnabled,
+        aliases: def.aliases || []
+      });
+    }
+
+    return result;
+  }
+
+  resetFeatures(guildId) {
+    const cohort = this.getCohort(guildId);
+    cohort.features = {};
+    for (const [key, def] of Object.entries(DEFAULT_FEATURES)) {
+      cohort.features[key] = def.enabled;
+    }
+    this.saveToDisk();
+    return this.getAllFeatures(guildId);
+  }
+
+  // --- Morning Attendance Optional / Exemption Management ---
+  getMorningOptional(guildId) {
+    const cohort = this.getCohort(guildId);
+    cohort.morningOptional = cohort.morningOptional || { users: [], roleId: null };
+    if (!Array.isArray(cohort.morningOptional.users)) {
+      cohort.morningOptional.users = [];
+    }
+    return cohort.morningOptional;
+  }
+
+  addMorningOptional(guildId, users, addedBy = "Staff") {
+    const opt = this.getMorningOptional(guildId);
+    const userList = Array.isArray(users) ? users : [users];
+    let addedCount = 0;
+
+    userList.forEach(u => {
+      const discordId = typeof u === 'string' ? u.trim() : (u.discordId || u.id || '').trim();
+      const name = typeof u === 'object' ? (u.name || u.displayName || u.username || discordId) : discordId;
+      const reason = typeof u === 'object' && u.reason ? u.reason : "Optional Morning Basecamp";
+
+      if (discordId && !opt.users.some(existing => existing.discordId === discordId)) {
+        opt.users.push({
+          discordId: discordId,
+          name: name,
+          reason: reason,
+          addedBy: addedBy,
+          addedAt: new Date().toISOString()
+        });
+        addedCount++;
+      }
+    });
+
+    this.saveToDisk();
+    return { addedCount, total: opt.users.length, users: opt.users };
+  }
+
+  removeMorningOptional(guildId, discordId) {
+    const opt = this.getMorningOptional(guildId);
+    const cleanId = String(discordId).trim();
+    const initialLen = opt.users.length;
+    opt.users = opt.users.filter(u => u.discordId !== cleanId);
+    this.saveToDisk();
+    return initialLen > opt.users.length;
+  }
+
+  clearMorningOptional(guildId) {
+    const opt = this.getMorningOptional(guildId);
+    const count = opt.users.length;
+    opt.users = [];
+    this.saveToDisk();
+    return count;
+  }
+
+  setMorningOptionalRole(guildId, roleId) {
+    const opt = this.getMorningOptional(guildId);
+    opt.roleId = roleId ? String(roleId).trim() : null;
+    this.saveToDisk();
+    return opt.roleId;
+  }
+
+  getMorningOptionalList(guildId) {
+    const opt = this.getMorningOptional(guildId);
+    return opt.users || [];
+  }
+
+  getMorningOptionalDiscordIds(guildId) {
+    const opt = this.getMorningOptional(guildId);
+    return (opt.users || []).map(u => u.discordId);
+  }
+
+  isMorningOptional(guildId, memberOrDiscordId, guild = null) {
+    if (!memberOrDiscordId) return false;
+    const opt = this.getMorningOptional(guildId);
+
+    const discordId = typeof memberOrDiscordId === 'string' ? memberOrDiscordId : memberOrDiscordId.id;
+    if (opt.users && opt.users.some(u => u.discordId === discordId)) {
+      return true;
+    }
+
+    // Check by Discord member roles if member object or guild is provided
+    let member = typeof memberOrDiscordId === 'object' && memberOrDiscordId.roles ? memberOrDiscordId : null;
+    if (!member && guild && discordId) {
+      member = guild.members.cache.get(discordId);
+    }
+
+    if (member && member.roles && member.roles.cache) {
+      if (opt.roleId && member.roles.cache.has(opt.roleId)) {
+        return true;
+      }
+      // Check for generic role names
+      const hasNamedRole = member.roles.cache.some(r => {
+        const rName = r.name.toLowerCase();
+        return rName === 'morning optional' || rName === 'morning-optional' || rName === 'morning exempt' || rName === 'morning-exempt';
+      });
+      if (hasNamedRole) return true;
+    }
+
+    return false;
   }
 
   getAllCohorts() {

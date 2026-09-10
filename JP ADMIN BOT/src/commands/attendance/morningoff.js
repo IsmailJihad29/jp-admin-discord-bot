@@ -47,7 +47,8 @@ module.exports = {
         `💡 **Commands:**\n` +
         `• Set today OFF: \`!morningoff today [reason]\`\n` +
         `• Set specific date OFF: \`!morningoff YYYY-MM-DD [reason]\`\n` +
-        `• Re-enable morning: \`!morningoff on [YYYY-MM-DD]\` or \`!morning on\``
+        `• Re-enable morning: \`!morningoff on [YYYY-MM-DD]\` or \`!morning on\`\n` +
+        `• Morning optional students: \`!morning optional list\` or \`!morning optional add @user\``
       );
 
       return message.reply({ embeds: [embed] });

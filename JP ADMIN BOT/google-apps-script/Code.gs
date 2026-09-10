@@ -28,6 +28,16 @@ var SCHEMA_DEFS = {
   "Jobs_Daily": ["Date", "Email", "Count", "Name", "Discord ID", "Total Rows", "New Rows", "Points"],
   "Interview_Log": ["Logged Date", "Name", "Discord ID", "Company", "Serial", "Interview Date", "Role Details", "Discord Link", "Timestamp"],
   "Job_Tasks": ["Task ID", "Timestamp", "Discord ID", "Student Name", "Company", "Role", "Tech Stack", "Deadline", "Submission Status", "GitHub Link", "Task Link", "Description Link", "Submitted At", "Mentor Status", "Mentor Note", "Points Awarded"],
+  "Scores": [
+    "Discord ID", "Student Name", "Email Address", "Weekly Points", "Lifetime Points",
+    "Weekly Attendance", "Weekly Jobs", "Weekly Streak", "Weekly Interviews", "Weekly Tasks",
+    "Lifetime Attendance", "Lifetime Jobs", "Lifetime Streak", "Lifetime Interviews", "Lifetime Tasks",
+    "Weekly Rank", "Lifetime Rank", "Weekly Status", "Last Updated"
+  ],
+  "Point_Ledger": [
+    "Timestamp", "Date", "Discord ID", "Student Name", "Category", "Event / Source",
+    "Points Awarded", "Running Weekly Total", "Running Lifetime Total", "Remarks"
+  ],
   "Holidays": ["Start Date", "End Date", "Holiday Title", "Logged By", "Created At"]
 };
 
@@ -36,7 +46,6 @@ var LEGACY_SHEETS = [
   "Dawn_Attendance",
   "Appeal_Logs",
   "Question_Bank",
-  "Scores",
   "Outreach_Daily",
   "Workshop_Attendance",
   "Resumes",
@@ -121,7 +130,7 @@ function doPost(e) {
         return jsonResponse(scanDailyAttendanceFromForm(ss, data.date));
 
       case "scanMorningAttendance":
-        return jsonResponse(scanMorningAttendanceFromForm(ss, data.date));
+        return jsonResponse(scanMorningAttendanceFromForm(ss, data.date, data));
 
       case "setMorningOff":
         return jsonResponse(setMorningOffData(ss, data));
@@ -190,8 +199,14 @@ function doPost(e) {
       case "getJobTasks":
         return jsonResponse(getJobTasksList(ss, data.status));
 
-      case "auditOverdueTasks":
-        return jsonResponse(auditOverdueTasksBatch(ss));
+      case "syncScores":
+        return jsonResponse(syncScoresData(ss, data));
+
+      case "getScores":
+        return jsonResponse(getScoresData(ss, data.discordId));
+
+      case "getPointLedger":
+        return jsonResponse(getPointLedgerData(ss, data.discordId, data.limit));
 
       case "initCommandManual":
         return jsonResponse(setupBotCommandsManualTab(ss));
@@ -1040,6 +1055,132 @@ function getAttendanceData(ss) {
 }
 
 /**
+ * Retrieves a multi-keyed lookup map of approved leaves from Leave_Requests.
+ * Accurately identifies Start Date (index 6), End Date (index 7), and Status (index 9).
+ * If targetDate is provided, matches leaves that cover targetDate.
+ */
+function getApprovedLeavesMap(ss, targetDate) {
+  var leaveSheet = ss.getSheetByName("Leave_Requests");
+  var map = {
+    byId: {},
+    byEmail: {},
+    byName: {},
+    list: [],
+    isLeave: function(student, dStr) {
+      if (!student) return false;
+      var dateToCheck = dStr ? parseDateToYMD(dStr) : (targetDate ? parseDateToYMD(targetDate) : "");
+      var dId = String(student.discordId || "").trim();
+      var em = String(student.email || "").toLowerCase().trim();
+      var nm = String(student.name || student.studentName || "").toLowerCase().trim();
+      var un = String(student.username || "").toLowerCase().trim();
+
+      if (dId && map.byId[dId]) return true;
+      if (em && map.byEmail[em]) return true;
+      if (nm && map.byName[nm]) return true;
+      if (un && map.byName[un]) return true;
+
+      // Range check
+      if (dateToCheck && map.list.length > 0) {
+        for (var i = 0; i < map.list.length; i++) {
+          var l = map.list[i];
+          if (dateToCheck >= l.start && dateToCheck <= l.end) {
+            if (dId && l.discordId === dId) return true;
+            if (em && l.email === em) return true;
+            if (nm && l.name === nm) return true;
+            if (un && l.name === un) return true;
+          }
+        }
+      }
+      return false;
+    }
+  };
+
+  if (!leaveSheet || leaveSheet.getLastRow() <= 1) return map;
+
+  var leaveValues = leaveSheet.getDataRange().getValues();
+  var lHeaders = leaveValues[0].map(function(h) { return String(h || "").toLowerCase().trim(); });
+
+  var ldIdCol = -1, lEmailCol = -1, lNameCol = -1, lStartCol = -1, lEndCol = -1, lStatusCol = -1;
+  for (var lc = 0; lc < lHeaders.length; lc++) {
+    var lh = lHeaders[lc];
+    if (lh.indexOf("discord") !== -1) ldIdCol = lc;
+    else if (lh.indexOf("email") !== -1) lEmailCol = lc;
+    else if (lh === "name" || lh.indexOf("student") !== -1 || lh.indexOf("full name") !== -1) lNameCol = lc;
+    else if (lh.indexOf("start") !== -1 || lh.indexOf("from") !== -1) lStartCol = lc;
+    else if (lh.indexOf("end") !== -1 || lh.indexOf("to") !== -1) lEndCol = lc;
+    else if (lh.indexOf("status") !== -1) lStatusCol = lc;
+  }
+
+  var normTarget = targetDate ? parseDateToYMD(targetDate) : null;
+
+  for (var l = 1; l < leaveValues.length; l++) {
+    var row = leaveValues[l];
+    var lDiscordId = String(ldIdCol !== -1 ? row[ldIdCol] : row[2] || "").trim();
+    var lEmail = String(lEmailCol !== -1 ? row[lEmailCol] : row[4] || "").toLowerCase().trim();
+    var lName = String(lNameCol !== -1 ? row[lNameCol] : row[3] || "").toLowerCase().trim();
+    var lStart = parseDateToYMD(lStartCol !== -1 ? row[lStartCol] : row[6]);
+    var lEnd = parseDateToYMD(lEndCol !== -1 ? row[lEndCol] : row[7]) || lStart;
+    var lStatus = String(lStatusCol !== -1 ? row[lStatusCol] : row[9] || "").trim().toLowerCase();
+
+    if (lStatus === 'approved' && lStart) {
+      map.list.push({ discordId: lDiscordId, email: lEmail, name: lName, start: lStart, end: lEnd });
+
+      if (!normTarget || (normTarget >= lStart && normTarget <= lEnd)) {
+        if (lDiscordId) map.byId[lDiscordId] = true;
+        if (lEmail) map.byEmail[lEmail] = true;
+        if (lName) map.byName[lName] = true;
+      }
+    }
+  }
+
+  return map;
+}
+
+/**
+ * Automatically propagates an approved leave across the Attendance matrix tab.
+ * Pre-marks 'L' for all working dates (Sunday to Thursday) in the leave date range,
+ * including both Daily and Morning sessions, ensuring future (advance) and past dates are stored as 'L'.
+ */
+function applyApprovedLeaveToAttendance(ss, discordId, email, startDate, endDate) {
+  if (!startDate) return;
+  var attSheet = ss.getSheetByName("Attendance");
+  if (!attSheet) return;
+  syncAttendanceRosterStudents(ss);
+
+  var sYMD = parseDateToYMD(startDate);
+  var eYMD = parseDateToYMD(endDate) || sYMD;
+  if (!sYMD) return;
+
+  var cur = new Date(sYMD + "T00:00:00");
+  var end = new Date(eYMD + "T00:00:00");
+  if (isNaN(cur.getTime()) || isNaN(end.getTime())) return;
+
+  var sessionsToRecord = [];
+  var dId = String(discordId || "").trim();
+  var em = String(email || "").trim();
+
+  while (cur <= end) {
+    var dayOfWeek = cur.getDay(); // 0 = Sun, 1 = Mon, ..., 4 = Thu, 5 = Fri, 6 = Sat
+    if (dayOfWeek >= 0 && dayOfWeek <= 4) {
+      var dStr = Utilities.formatDate(cur, CONFIG.TIMEZONE, "yyyy-MM-dd");
+      sessionsToRecord.push({
+        date: dStr,
+        records: [{ discordId: dId, email: em, status: "L" }]
+      });
+      sessionsToRecord.push({
+        date: dStr + " (Morning)",
+        records: [{ discordId: dId, email: em, status: "L" }]
+      });
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  if (sessionsToRecord.length > 0) {
+    recordAttendanceSessionsBulk(ss, sessionsToRecord);
+  }
+}
+
+/**
  * Daily Attendance Scanner (+1 Present, -1 Absent, 0 Leave)
  */
 function scanDailyAttendanceFromForm(ss, dateStr) {
@@ -1048,7 +1189,6 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
   var formSheet = findSheetByPattern(ss, ["Daily Attendance", "Daily_Attendance", "Attendance Responses", "Form Responses 1"], /(daily|attendance\s*response|form\s*response)/i);
   var botMapSheet = ss.getSheetByName("Bot_Map");
   var attendanceSheet = ss.getSheetByName("Attendance");
-  var leaveSheet = ss.getSheetByName("Leave_Requests");
 
   if (!formSheet) {
     var tabNames = ss.getSheets().map(function(s) { return s.getName(); });
@@ -1065,7 +1205,6 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
   }
 
   // 1. Get active students from Bot_Map
-  // Build email-to-discordId map for students who may not have discordId in form submission
   var botMapValues = botMapSheet.getDataRange().getValues();
   var emailToDiscordId = {};
   var students = [];
@@ -1079,39 +1218,13 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
 
     if (email && dId) emailToDiscordId[email] = dId;
 
-    // Include students with email OR discordId (email-only students matched via Bot_Map lookup)
     if ((email || dId) && status === 'active') {
       students.push({ email: email, name: name, username: uName, discordId: dId, phone: phone, rowIdx: i + 1 });
     }
   }
 
-  // 2. Approved leaves
-  var approvedLeaves = {};
-  if (leaveSheet && leaveSheet.getLastRow() > 1) {
-    var leaveValues = leaveSheet.getDataRange().getValues();
-    var lHeaders = leaveValues[0].map(function(h) { return String(h || "").toLowerCase().trim(); });
-    var ldIdCol = -1, lStartCol = -1, lEndCol = -1, lStatusCol = -1;
-    for (var lc = 0; lc < lHeaders.length; lc++) {
-      var lh = lHeaders[lc];
-      if (lh.indexOf("discord") !== -1) ldIdCol = lc;
-      else if (lh.indexOf("start") !== -1) lStartCol = lc;
-      else if (lh.indexOf("end") !== -1) lEndCol = lc;
-      else if (lh.indexOf("status") !== -1) lStatusCol = lc;
-    }
-
-    for (var l = 1; l < leaveValues.length; l++) {
-      var lDiscordId = String(ldIdCol !== -1 ? leaveValues[l][ldIdCol] : leaveValues[l][2] || "").trim();
-      var lStart = parseDateToYMD(lStartCol !== -1 ? leaveValues[l][lStartCol] : leaveValues[l][5]);
-      var lEnd = parseDateToYMD(lEndCol !== -1 ? leaveValues[l][lEndCol] : leaveValues[l][6]) || lStart;
-      var lStatus = String(lStatusCol !== -1 ? leaveValues[l][lStatusCol] : leaveValues[l][8] || "").trim().toLowerCase();
-
-      if (lStatus === 'approved' && lDiscordId) {
-        if (targetDate >= lStart && targetDate <= lEnd) {
-          approvedLeaves[lDiscordId] = true;
-        }
-      }
-    }
-  }
+  // 2. Approved leaves lookup (robust multi-key matching)
+  var leaveMap = getApprovedLeavesMap(ss, targetDate);
 
   // 3. Scan Form responses with robust date parsing & matching
   var presentSubmissions = {};
@@ -1155,6 +1268,8 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
     if (s.phone && presentSubmissions[s.phone]) isPresent = true;
     if (s.name && presentSubmissions[s.name.toLowerCase()]) isPresent = true;
 
+    var isLeave = leaveMap.isLeave(s, targetDate) || Boolean(resolvedDiscordId && leaveMap.byId[resolvedDiscordId]);
+
     var status = 'A';
     var pts = -1;
 
@@ -1162,7 +1277,7 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
       status = 'P';
       pts = 1;
       presentCount++;
-    } else if (approvedLeaves[resolvedDiscordId]) {
+    } else if (isLeave) {
       status = 'L';
       pts = 0;
       leaveCount++;
@@ -1198,11 +1313,19 @@ function scanDailyAttendanceFromForm(ss, dateStr) {
 }
 
 /**
- * Morning Attendance Scanner (+1 Present, -1 Absent, 0 Leave)
+ * Morning Attendance Scanner (+1 Present, -1 Absent, 0 Leave, 0 Optional)
  */
-function scanMorningAttendanceFromForm(ss, dateStr) {
+function scanMorningAttendanceFromForm(ss, dateStr, options) {
   var targetDate = dateStr || Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
   var colDate = targetDate + " (Morning)";
+
+  // Build exempt Discord ID lookup map
+  var exemptMap = {};
+  if (options && options.exemptDiscordIds && Array.isArray(options.exemptDiscordIds)) {
+    options.exemptDiscordIds.forEach(function(id) {
+      if (id) exemptMap[String(id).trim()] = true;
+    });
+  }
 
   var formSheet = findSheetByPattern(ss, ["Morning Attendance", "Morning_Attendance"], /morning/i);
   var botMapSheet = ss.getSheetByName("Bot_Map");
@@ -1243,33 +1366,8 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
     }
   }
 
-  // 2. Approved leaves
-  var approvedLeaves = {};
-  if (leaveSheet && leaveSheet.getLastRow() > 1) {
-    var leaveValues = leaveSheet.getDataRange().getValues();
-    var lHeaders = leaveValues[0].map(function(h) { return String(h || "").toLowerCase().trim(); });
-    var ldIdCol = -1, lStartCol = -1, lEndCol = -1, lStatusCol = -1;
-    for (var lc = 0; lc < lHeaders.length; lc++) {
-      var lh = lHeaders[lc];
-      if (lh.indexOf("discord") !== -1) ldIdCol = lc;
-      else if (lh.indexOf("start") !== -1) lStartCol = lc;
-      else if (lh.indexOf("end") !== -1) lEndCol = lc;
-      else if (lh.indexOf("status") !== -1) lStatusCol = lc;
-    }
-
-    for (var l = 1; l < leaveValues.length; l++) {
-      var lDiscordId = String(ldIdCol !== -1 ? leaveValues[l][ldIdCol] : leaveValues[l][2] || "").trim();
-      var lStart = parseDateToYMD(lStartCol !== -1 ? leaveValues[l][lStartCol] : leaveValues[l][5]);
-      var lEnd = parseDateToYMD(lEndCol !== -1 ? leaveValues[l][lEndCol] : leaveValues[l][6]) || lStart;
-      var lStatus = String(lStatusCol !== -1 ? leaveValues[l][lStatusCol] : leaveValues[l][8] || "").trim().toLowerCase();
-
-      if (lStatus === 'approved' && lDiscordId) {
-        if (targetDate >= lStart && targetDate <= lEnd) {
-          approvedLeaves[lDiscordId] = true;
-        }
-      }
-    }
-  }
+  // 2. Approved leaves lookup (robust multi-key matching)
+  var leaveMap = getApprovedLeavesMap(ss, targetDate);
 
   // 3. Scan Morning Form responses with robust date parsing & matching
   var presentSubmissions = {};
@@ -1302,6 +1400,7 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
   var presentCount = 0;
   var absentCount = 0;
   var leaveCount = 0;
+  var optionalCount = 0;
   var attendanceRecords = [];
 
   students.forEach(function(s) {
@@ -1313,6 +1412,14 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
     if (s.phone && presentSubmissions[s.phone]) isPresent = true;
     if (s.name && presentSubmissions[s.name.toLowerCase()]) isPresent = true;
 
+    var isExempt = Boolean(
+      (resolvedDiscordId && exemptMap[resolvedDiscordId]) ||
+      (s.discordId && exemptMap[s.discordId]) ||
+      (s.username && exemptMap[s.username])
+    );
+
+    var isLeave = leaveMap.isLeave(s, targetDate) || Boolean(resolvedDiscordId && leaveMap.byId[resolvedDiscordId]);
+
     var status = 'A';
     var pts = -1;
 
@@ -1320,10 +1427,14 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
       status = 'P';
       pts = 1;
       presentCount++;
-    } else if (approvedLeaves[resolvedDiscordId]) {
+    } else if (isLeave) {
       status = 'L';
       pts = 0;
       leaveCount++;
+    } else if (isExempt) {
+      status = 'OPT';
+      pts = 0;
+      optionalCount++;
     } else {
       status = 'A';
       pts = -1;
@@ -1352,6 +1463,7 @@ function scanMorningAttendanceFromForm(ss, dateStr) {
     present: presentCount,
     absent: absentCount,
     leave: leaveCount,
+    optional: optionalCount,
     records: attendanceRecords
   };
 }
@@ -1487,33 +1599,8 @@ function scanCustomAttendanceFromForm(ss, customTabName, dateStr, customLabel) {
     }
   }
 
-  // 2. Approved leaves
-  var approvedLeaves = {};
-  if (leaveSheet && leaveSheet.getLastRow() > 1) {
-    var leaveValues = leaveSheet.getDataRange().getValues();
-    var lHeaders = leaveValues[0].map(function(h) { return String(h || "").toLowerCase().trim(); });
-    var ldIdCol = -1, lStartCol = -1, lEndCol = -1, lStatusCol = -1;
-    for (var lc = 0; lc < lHeaders.length; lc++) {
-      var lh = lHeaders[lc];
-      if (lh.indexOf("discord") !== -1) ldIdCol = lc;
-      else if (lh.indexOf("start") !== -1) lStartCol = lc;
-      else if (lh.indexOf("end") !== -1) lEndCol = lc;
-      else if (lh.indexOf("status") !== -1) lStatusCol = lc;
-    }
-
-    for (var l = 1; l < leaveValues.length; l++) {
-      var lDiscordId = String(ldIdCol !== -1 ? leaveValues[l][ldIdCol] : leaveValues[l][2] || "").trim();
-      var lStart = parseDateToYMD(lStartCol !== -1 ? leaveValues[l][lStartCol] : leaveValues[l][5]);
-      var lEnd = parseDateToYMD(lEndCol !== -1 ? leaveValues[l][lEndCol] : leaveValues[l][6]) || lStart;
-      var lStatus = String(lStatusCol !== -1 ? leaveValues[l][lStatusCol] : leaveValues[l][8] || "").trim().toLowerCase();
-
-      if (lStatus === 'approved' && lDiscordId) {
-        if (targetDate >= lStart && targetDate <= lEnd) {
-          approvedLeaves[lDiscordId] = true;
-        }
-      }
-    }
-  }
+  // 2. Approved leaves lookup (robust multi-key matching)
+  var leaveMap = getApprovedLeavesMap(ss, targetDate);
 
   // 3. Scan custom form responses
   var presentSubmissions = {};
@@ -1558,6 +1645,8 @@ function scanCustomAttendanceFromForm(ss, customTabName, dateStr, customLabel) {
     if (s.phone && presentSubmissions[s.phone]) isPresent = true;
     if (s.name && presentSubmissions[s.name.toLowerCase()]) isPresent = true;
 
+    var isLeave = leaveMap.isLeave(s, targetDate) || Boolean(resolvedDiscordId && leaveMap.byId[resolvedDiscordId]);
+
     var status = 'A';
     var pts = -1;
 
@@ -1565,7 +1654,7 @@ function scanCustomAttendanceFromForm(ss, customTabName, dateStr, customLabel) {
       status = 'P';
       pts = 1;
       presentCount++;
-    } else if (approvedLeaves[resolvedDiscordId]) {
+    } else if (isLeave) {
       status = 'L';
       pts = 0;
       leaveCount++;
@@ -1615,6 +1704,13 @@ function syncHistoricalAttendanceFromForms(ss, options) {
   var startDate = options.startDate || null;
   var endDate = options.endDate || null;
 
+  var exemptMap = {};
+  if (options.exemptDiscordIds && Array.isArray(options.exemptDiscordIds)) {
+    options.exemptDiscordIds.forEach(function(id) {
+      if (id) exemptMap[String(id).trim()] = true;
+    });
+  }
+
   var botMapSheet = ss.getSheetByName("Bot_Map");
   var attendanceSheet = ss.getSheetByName("Attendance");
   var leaveSheet = ss.getSheetByName("Leave_Requests");
@@ -1645,29 +1741,11 @@ function syncHistoricalAttendanceFromForms(ss, options) {
     return { status: "FAILED", error: "No active students found in Bot_Map." };
   }
 
-  // 2. Approved leaves
-  var approvedLeaves = [];
-  if (leaveSheet && leaveSheet.getLastRow() > 1) {
-    var leaveValues = leaveSheet.getDataRange().getValues();
-    for (var l = 1; l < leaveValues.length; l++) {
-      var lDiscordId = String(leaveValues[l][2] || "").trim();
-      var lStart = parseDateToYMD(leaveValues[l][5]);
-      var lEnd = parseDateToYMD(leaveValues[l][6]);
-      var lStatus = String(leaveValues[l][8] || "").trim().toLowerCase();
+  // 2. Approved leaves lookup (robust multi-key matching)
+  var leaveMap = getApprovedLeavesMap(ss);
 
-      if (lStatus === 'approved' && lDiscordId && lStart) {
-        approvedLeaves.push({ discordId: lDiscordId, start: lStart, end: lEnd || lStart });
-      }
-    }
-  }
-
-  function isStudentOnLeave(discordId, dateYmd) {
-    for (var k = 0; k < approvedLeaves.length; k++) {
-      if (approvedLeaves[k].discordId === discordId && dateYmd >= approvedLeaves[k].start && dateYmd <= approvedLeaves[k].end) {
-        return true;
-      }
-    }
-    return false;
+  function isStudentOnLeave(student, dateYmd) {
+    return leaveMap.isLeave(student, dateYmd);
   }
 
   var dailyDatesProcessed = [];
@@ -1715,7 +1793,7 @@ function syncHistoricalAttendanceFromForms(ss, options) {
                     (s.name && pMap[s.name.toLowerCase()]);
           var status = 'A';
           if (isP) status = 'P';
-          else if (isStudentOnLeave(s.discordId, dDate)) status = 'L';
+          else if (isStudentOnLeave(s, dDate)) status = 'L';
           return { discordId: s.discordId, email: s.email, name: s.name, status: status };
         });
 
@@ -1764,9 +1842,11 @@ function syncHistoricalAttendanceFromForms(ss, options) {
                     (s.discordId && mpMap[s.discordId]) ||
                     (s.phone && mpMap[s.phone]) ||
                     (s.name && mpMap[s.name.toLowerCase()]);
+          var isExempt = Boolean((s.discordId && exemptMap[s.discordId]) || (s.username && exemptMap[s.username]));
           var status = 'A';
           if (isP) status = 'P';
-          else if (isStudentOnLeave(s.discordId, mDate)) status = 'L';
+          else if (isStudentOnLeave(s, mDate)) status = 'L';
+          else if (isExempt) status = 'OPT';
           return { discordId: s.discordId, email: s.email, name: s.name, status: status };
         });
 
@@ -2158,6 +2238,19 @@ function updateLeaveRequest(ss, data) {
     if (phoneCol !== -1 && profile.phone && !curPhone) {
       sheet.getRange(targetRow, phoneCol + 1).setValue(profile.phone);
     }
+       var startCol = -1, endCol = -1;
+    for (var sc = 0; sc < headers.length; sc++) {
+      var sh = headers[sc];
+      if (sh.indexOf("start") !== -1 || sh.indexOf("from") !== -1) startCol = sc;
+      else if (sh.indexOf("end") !== -1 || sh.indexOf("to") !== -1) endCol = sc;
+    }
+    var lStart = parseDateToYMD(startCol !== -1 ? rowData[startCol] : rowData[6]);
+    var lEnd = parseDateToYMD(endCol !== -1 ? rowData[endCol] : rowData[7]) || lStart;
+
+    if (String(data.status).trim().toUpperCase() === "APPROVED") {
+      // Pre-mark all dates in leave range as 'L' in Attendance matrix tab immediately!
+      applyApprovedLeaveToAttendance(ss, curDiscordId || profile.discordId, curEmail || profile.email, lStart, lEnd);
+    }
 
     return {
       status: "SUCCESS",
@@ -2165,7 +2258,9 @@ function updateLeaveRequest(ss, data) {
       updatedStatus: data.status,
       name: profile.name || curName,
       email: profile.email || curEmail,
-      phone: profile.phone || curPhone
+      phone: profile.phone || curPhone,
+      startDate: lStart,
+      endDate: lEnd
     };
   }
 
@@ -2190,8 +2285,8 @@ function getLeavesList(ss, statusFilter) {
     else if (h === "name" || h.indexOf("full name") !== -1 || h.indexOf("student") !== -1) nameCol = c;
     else if (h.indexOf("email") !== -1) emailCol = c;
     else if (h.indexOf("phone") !== -1 || h.indexOf("mobile") !== -1) phoneCol = c;
-    else if (h.indexOf("start") !== -1) startCol = c;
-    else if (h.indexOf("end") !== -1) endCol = c;
+    else if (h.indexOf("start") !== -1 || h.indexOf("from") !== -1) startCol = c;
+    else if (h.indexOf("end") !== -1 || h.indexOf("to") !== -1) endCol = c;
     else if (h.indexOf("reason") !== -1) reasonCol = c;
     else if (h.indexOf("status") !== -1) statusCol = c;
     else if (h.indexOf("note") !== -1) noteCol = c;
@@ -2208,11 +2303,11 @@ function getLeavesList(ss, statusFilter) {
       name: String(nameCol !== -1 ? row[nameCol] : row[3] || ""),
       email: String(emailCol !== -1 ? row[emailCol] : row[4] || ""),
       phone: String(phoneCol !== -1 ? row[phoneCol] : (row.length > 5 ? row[5] : "") || ""),
-      startDate: String(startCol !== -1 ? parseDateToYMD(row[startCol]) : row[5] || ""),
-      endDate: String(endCol !== -1 ? parseDateToYMD(row[endCol]) : row[6] || ""),
-      reason: String(reasonCol !== -1 ? row[reasonCol] : row[7] || ""),
-      status: String(statusCol !== -1 ? row[statusCol] : row[8] || ""),
-      note: String(noteCol !== -1 ? row[noteCol] : row[9] || "")
+      startDate: String(startCol !== -1 ? parseDateToYMD(row[startCol]) : parseDateToYMD(row[6]) || ""),
+      endDate: String(endCol !== -1 ? parseDateToYMD(row[endCol]) : parseDateToYMD(row[7]) || ""),
+      reason: String(reasonCol !== -1 ? row[reasonCol] : row[8] || ""),
+      status: String(statusCol !== -1 ? row[statusCol] : row[9] || ""),
+      note: String(noteCol !== -1 ? row[noteCol] : row[10] || "")
     };
 
     if (!statusFilter || item.status.toLowerCase() === statusFilter.toLowerCase()) {
@@ -2239,29 +2334,28 @@ function repairLeaveRequestsMatrix(ss) {
 
   ensureLeaveSheetHeader(sheet);
 
-  if (sheet.getLastRow() <= 1) {
+  var rawValues = sheet.getDataRange().getValues();
+  if (rawValues.length <= 1) {
     return {
       status: "SUCCESS",
       message: "Leave_Requests sheet is empty. Header is verified.",
-      totalRows: 0,
-      syncedProfiles: 0
+      totalRows: 0
     };
   }
 
-  var rawValues = sheet.getDataRange().getValues();
-  var headers = rawValues[0].map(function(h) { return String(h || "").toLowerCase().trim(); });
+  var rawHeaders = rawValues[0].map(function(h) { return String(h || "").toLowerCase().trim(); });
 
   var reqIdCol = -1, tsCol = -1, dIdCol = -1, nameCol = -1, emailCol = -1, phoneCol = -1, startCol = -1, endCol = -1, reasonCol = -1, statusCol = -1, noteCol = -1;
-  for (var c = 0; c < headers.length; c++) {
-    var h = headers[c];
+  for (var c = 0; c < rawHeaders.length; c++) {
+    var h = rawHeaders[c];
     if (h.indexOf("request") !== -1 && h.indexOf("id") !== -1) reqIdCol = c;
-    else if (h.indexOf("timestamp") !== -1 || h.indexOf("date") === 0) tsCol = c;
+    else if (h.indexOf("timestamp") !== -1) tsCol = c;
     else if (h.indexOf("discord") !== -1) dIdCol = c;
     else if (h === "name" || h.indexOf("full name") !== -1 || h.indexOf("student") !== -1) nameCol = c;
     else if (h.indexOf("email") !== -1) emailCol = c;
     else if (h.indexOf("phone") !== -1 || h.indexOf("mobile") !== -1) phoneCol = c;
-    else if (h.indexOf("start") !== -1) startCol = c;
-    else if (h.indexOf("end") !== -1) endCol = c;
+    else if (h.indexOf("start") !== -1 || h.indexOf("from") !== -1) startCol = c;
+    else if (h.indexOf("end") !== -1 || h.indexOf("to") !== -1) endCol = c;
     else if (h.indexOf("reason") !== -1) reasonCol = c;
     else if (h.indexOf("status") !== -1) statusCol = c;
     else if (h.indexOf("note") !== -1) noteCol = c;
@@ -2282,11 +2376,11 @@ function repairLeaveRequestsMatrix(ss) {
     var curName = String(nameCol !== -1 ? row[nameCol] : row[3] || "").trim();
     var curEmail = String(emailCol !== -1 ? row[emailCol] : row[4] || "").trim();
     var curPhone = String(phoneCol !== -1 ? row[phoneCol] : (row.length > 5 ? row[5] : "") || "").trim();
-    var startDate = parseDateToYMD(startCol !== -1 ? row[startCol] : row[5]) || String(row[5] || "");
-    var endDate = parseDateToYMD(endCol !== -1 ? row[endCol] : row[6]) || startDate;
-    var reason = String(reasonCol !== -1 ? row[reasonCol] : row[7] || "").trim();
-    var status = String(statusCol !== -1 ? row[statusCol] : row[8] || "Pending").trim();
-    var note = String(noteCol !== -1 ? row[noteCol] : row[9] || "").trim();
+    var startDate = parseDateToYMD(startCol !== -1 ? row[startCol] : row[6]) || String(row[6] || "");
+    var endDate = parseDateToYMD(endCol !== -1 ? row[endCol] : row[7]) || startDate;
+    var reason = String(reasonCol !== -1 ? row[reasonCol] : row[8] || "").trim();
+    var status = String(statusCol !== -1 ? row[statusCol] : row[9] || "Pending").trim();
+    var note = String(noteCol !== -1 ? row[noteCol] : row[10] || "").trim();
 
     // Auto-sync profile from Bot_Map & All Data
     var profile = findStudentProfile(ss, { discordId: discordId, email: curEmail, name: curName, phone: curPhone });
@@ -2878,5 +2972,218 @@ function setupBotCommandsManualTab(ss) {
     status: "SUCCESS",
     tabName: sheetName,
     totalCommandsLogged: rows.length - 1
+  };
+}
+
+/**
+ * =========================================================================
+ * 12. Student Scores Snapshot & Point Ledger System
+ * =========================================================================
+ */
+
+/**
+ * Syncs consolidated student scores (weekly & lifetime) and appends point ledger entries
+ */
+function syncScoresData(ss, data) {
+  data = data || {};
+  var scoresList = data.scores || [];
+  var ledgerEntries = data.ledgerEntries || [];
+
+  var scoresSheet = ss.getSheetByName("Scores");
+  var ledgerSheet = ss.getSheetByName("Point_Ledger");
+
+  if (!scoresSheet || !ledgerSheet) {
+    setupAllRequiredSheets(ss);
+    scoresSheet = ss.getSheetByName("Scores");
+    ledgerSheet = ss.getSheetByName("Point_Ledger");
+  }
+
+  var updatedScoresCount = 0;
+  var headers = SCHEMA_DEFS["Scores"];
+
+  // 1. Write or update Scores tab
+  if (scoresSheet && scoresList.length > 0) {
+    var nowStr = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+
+    var rows = scoresList.map(function(s) {
+      return [
+        String(s.discordId || "").trim(),
+        String(s.name || s.studentName || "").trim(),
+        String(s.email || "").trim(),
+        Number(s.weeklyPoints !== undefined ? s.weeklyPoints : s.totalPoints) || 0,
+        Number(s.lifetimePoints !== undefined ? s.lifetimePoints : s.totalPoints) || 0,
+        Number(s.weeklyAttendance || s.attendancePoints) || 0,
+        Number(s.weeklyJobs || s.jobPoints) || 0,
+        Number(s.weeklyStreak || s.streakBonus) || 0,
+        Number(s.weeklyInterviews || s.interviewPoints) || 0,
+        Number(s.weeklyTasks || s.taskPoints) || 0,
+        Number(s.lifetimeAttendance || s.attendancePoints) || 0,
+        Number(s.lifetimeJobs || s.jobPoints) || 0,
+        Number(s.lifetimeStreak || s.streakBonus) || 0,
+        Number(s.lifetimeInterviews || s.interviewPoints) || 0,
+        Number(s.lifetimeTasks || s.taskPoints) || 0,
+        s.weeklyRank ? Number(s.weeklyRank) : "",
+        s.lifetimeRank ? Number(s.lifetimeRank) : "",
+        String(s.weeklyStatus || s.status || "Active"),
+        s.lastUpdated || nowStr
+      ];
+    });
+
+    // Clear existing data (keep header)
+    var lastRow = scoresSheet.getLastRow();
+    if (lastRow > 1) {
+      scoresSheet.getRange(2, 1, lastRow - 1, scoresSheet.getLastColumn()).clearContent();
+    }
+
+    if (rows.length > 0) {
+      scoresSheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+      updatedScoresCount = rows.length;
+    }
+  }
+
+  // 2. Append new ledger entries to Point_Ledger tab
+  var addedLedgerCount = 0;
+  if (ledgerSheet && ledgerEntries.length > 0) {
+    var nowStr = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+    var todayStr = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd");
+
+    var ledgerRows = ledgerEntries.map(function(entry) {
+      return [
+        entry.timestamp || nowStr,
+        entry.date || todayStr,
+        String(entry.discordId || "").trim(),
+        String(entry.name || entry.studentName || "").trim(),
+        String(entry.category || "General"),
+        String(entry.eventSource || entry.source || "System"),
+        Number(entry.pointsAwarded || entry.points || 0),
+        Number(entry.runningWeeklyTotal || 0),
+        Number(entry.runningLifetimeTotal || 0),
+        String(entry.remarks || entry.note || "")
+      ];
+    });
+
+    if (ledgerRows.length > 0) {
+      var nextRow = ledgerSheet.getLastRow() + 1;
+      ledgerSheet.getRange(nextRow, 1, ledgerRows.length, SCHEMA_DEFS["Point_Ledger"].length).setValues(ledgerRows);
+      addedLedgerCount = ledgerRows.length;
+    }
+  }
+
+  return {
+    status: "SUCCESS",
+    scoresUpdated: updatedScoresCount,
+    ledgerEntriesAdded: addedLedgerCount,
+    syncedAt: new Date().toISOString()
+  };
+}
+
+/**
+ * Retrieves pre-calculated score data for a specific student (or all students) from Scores tab
+ */
+function getScoresData(ss, discordId) {
+  var sheet = ss.getSheetByName("Scores");
+  if (!sheet || sheet.getLastRow() <= 1) {
+    return { found: false, scores: [], message: "Scores tab is empty or not initialized." };
+  }
+
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0].map(function(h) { return String(h || "").trim(); });
+
+  if (discordId) {
+    var cleanId = String(discordId).trim();
+    for (var r = 1; r < values.length; r++) {
+      var rowId = String(values[r][0] || "").trim();
+      if (rowId === cleanId) {
+        return {
+          found: true,
+          score: {
+            discordId: cleanId,
+            name: values[r][1],
+            email: values[r][2],
+            weeklyPoints: Number(values[r][3]) || 0,
+            lifetimePoints: Number(values[r][4]) || 0,
+            weeklyAttendance: Number(values[r][5]) || 0,
+            weeklyJobs: Number(values[r][6]) || 0,
+            weeklyStreak: Number(values[r][7]) || 0,
+            weeklyInterviews: Number(values[r][8]) || 0,
+            weeklyTasks: Number(values[r][9]) || 0,
+            lifetimeAttendance: Number(values[r][10]) || 0,
+            lifetimeJobs: Number(values[r][11]) || 0,
+            lifetimeStreak: Number(values[r][12]) || 0,
+            lifetimeInterviews: Number(values[r][13]) || 0,
+            lifetimeTasks: Number(values[r][14]) || 0,
+            weeklyRank: values[r][15] ? Number(values[r][15]) : null,
+            lifetimeRank: values[r][16] ? Number(values[r][16]) : null,
+            weeklyStatus: values[r][17] || "Active",
+            status: values[r][17] || "Active",
+            lastUpdated: values[r][18]
+          }
+        };
+      }
+    }
+    return { found: false, discordId: cleanId, message: "Student not found in Scores tab." };
+  }
+
+  // Return all scores
+  var allScores = [];
+  for (var i = 1; i < values.length; i++) {
+    allScores.push({
+      discordId: values[i][0],
+      name: values[i][1],
+      email: values[i][2],
+      weeklyPoints: Number(values[i][3]) || 0,
+      lifetimePoints: Number(values[i][4]) || 0,
+      weeklyRank: values[i][15] ? Number(values[i][15]) : null,
+      lifetimeRank: values[i][16] ? Number(values[i][16]) : null,
+      weeklyStatus: values[i][17] || "Active",
+      status: values[i][17] || "Active"
+    });
+  }
+
+  return { found: true, total: allScores.length, scores: allScores };
+}
+
+/**
+ * Retrieves recent Point Ledger entries for a student
+ */
+function getPointLedgerData(ss, discordId, limit) {
+  var sheet = ss.getSheetByName("Point_Ledger");
+  if (!sheet || sheet.getLastRow() <= 1) {
+    return { found: false, entries: [] };
+  }
+
+  limit = Number(limit) || 10;
+  var values = sheet.getDataRange().getValues();
+  var entries = [];
+  var cleanId = discordId ? String(discordId).trim() : null;
+
+  // Read backwards from bottom to get latest entries first
+  for (var r = values.length - 1; r >= 1; r--) {
+    var row = values[r];
+    var rowDiscordId = String(row[2] || "").trim();
+
+    if (!cleanId || rowDiscordId === cleanId) {
+      entries.push({
+        timestamp: row[0],
+        date: row[1],
+        discordId: rowDiscordId,
+        name: row[3],
+        category: row[4],
+        eventSource: row[5],
+        pointsAwarded: Number(row[6]) || 0,
+        runningWeeklyTotal: Number(row[7]) || 0,
+        runningLifetimeTotal: Number(row[8]) || 0,
+        remarks: row[9]
+      });
+
+      if (entries.length >= limit) break;
+    }
+  }
+
+  return {
+    found: true,
+    discordId: cleanId,
+    totalReturned: entries.length,
+    entries: entries
   };
 }

@@ -52,21 +52,38 @@ module.exports = {
 
       cohort.automation = cohort.automation || { enabled: true };
 
-      if (action === 'start') {
+      if (action === 'start' || action === 'on') {
         cohort.automation[key] = true;
         cohortManager.setCohort(guildId, cohort);
-        return message.reply({ embeds: [Embeds.success("Automation Started", `Automation **${key}** is now enabled.`)] });
-      } else if (action === 'stop') {
+        cohortManager.setFeature(guildId, key, true);
+        return message.reply({ embeds: [Embeds.success("Automation Started", `Automation / Feature **${key}** is now enabled.`)] });
+      } else if (action === 'stop' || action === 'off') {
         cohort.automation[key] = false;
         cohortManager.setCohort(guildId, cohort);
-        return message.reply({ embeds: [Embeds.warning("Automation Stopped", `Automation **${key}** is now paused.`)] });
+        cohortManager.setFeature(guildId, key, false);
+        return message.reply({ embeds: [Embeds.warning("Automation Stopped", `Automation / Feature **${key}** is now paused.`)] });
       }
     }
 
     // Default !control overview
+    const morningEnabled = cohortManager.isFeatureEnabled(guildId, 'morning_attendance');
+    const dailyEnabled = cohortManager.isFeatureEnabled(guildId, 'daily_attendance');
+    const scraperEnabled = cohortManager.isFeatureEnabled(guildId, 'job_scraper');
+
     const embed = Embeds.info(
       "Automation Control Center",
-      `• **Timezone:** \`${cohort.timezone || 'Asia/Dhaka'}\`\n• **Active Window:** \`${cohort.automation?.activeWindow || '04:50-23:30'}\`\n• **Global Automation:** ${cohort.automation?.enabled !== false ? '🟢 ON' : '🔴 OFF'}\n• **Forwarder Engine:** ${cohort.forwarder?.enabled ? '🟢 ON' : '🔴 OFF'}\n\nUse \`!times\` to view schedule clocks or \`!time <key> <HH:MM>\` to adjust.`
+      `• **Timezone:** \`${cohort.timezone || 'Asia/Dhaka'}\`\n` +
+      `• **Active Window:** \`${cohort.automation?.activeWindow || '04:50-23:30'}\`\n` +
+      `• **Global Automation:** ${cohort.automation?.enabled !== false ? '🟢 ON' : '🔴 OFF'}\n` +
+      `• **Morning Attendance:** ${morningEnabled ? '🟢 ON' : '🔴 OFF'}\n` +
+      `• **Daily Attendance:** ${dailyEnabled ? '🟢 ON' : '🔴 OFF'}\n` +
+      `• **Job Scraper:** ${scraperEnabled ? '🟢 ON' : '🔴 OFF'}\n` +
+      `• **Forwarder Engine:** ${cohort.forwarder?.enabled ? '🟢 ON' : '🔴 OFF'}\n\n` +
+      `💡 *Commands:*\n` +
+      `• View/toggle all features: \`!features\`\n` +
+      `• Enable feature: \`!feature on <name>\`\n` +
+      `• Disable feature: \`!feature off <name>\`\n` +
+      `• View schedule clocks: \`!times\` or adjust: \`!time <key> <HH:MM>\``
     );
     message.reply({ embeds: [embed] });
   }

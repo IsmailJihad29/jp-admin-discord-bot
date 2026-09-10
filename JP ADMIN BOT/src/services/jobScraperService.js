@@ -158,8 +158,20 @@ class JobScraperService {
         };
       }
 
-      // 1. Discover Column Indices from Header Row
-      const headerRow = this.parseCsvLine(lines[0]).map(h => h.toLowerCase().trim());
+      // 1. Discover Header Row (scan first 5 lines to find where headers are)
+      let headerLineIdx = 0;
+      for (let i = 0; i < Math.min(lines.length, 5); i++) {
+        const parsed = this.parseCsvLine(lines[i]).map(h => h.toLowerCase().trim());
+        const matches = parsed.filter(h =>
+          h.includes('company') || h.includes('position') || h.includes('role') ||
+          h.includes('link') || h.includes('url') || h.includes('date')
+        );
+        if (matches.length >= 2) {
+          headerLineIdx = i;
+          break;
+        }
+      }
+      const headerRow = this.parseCsvLine(lines[headerLineIdx]).map(h => h.toLowerCase().trim());
 
       let colCompany = -1;
       let colPosition = -1;
@@ -168,22 +180,52 @@ class JobScraperService {
       let colHowApplied = -1;
       let colDate = -1;
 
-      headerRow.forEach((col, idx) => {
-        if (col.includes('company') || col.includes('organization') || col.includes('employer')) colCompany = idx;
-        else if (col.includes('position') || col.includes('role') || col.includes('job title') || col.includes('title')) colPosition = idx;
-        else if (col.includes('type') || col.includes('workplace')) colJobType = idx;
-        else if (col.includes('link') || col.includes('url') || col.includes('posting') || col.includes('apply')) colJobLink = idx;
-        else if (col.includes('how') || col.includes('method') || col.includes('source') || col.includes('platform') || col.includes('via') || col.includes('channel')) colHowApplied = idx;
-        else if (col.includes('date') || col.includes('timestamp') || col.includes('time')) colDate = idx;
-      });
+      // Date: Exact match first, then substring
+      colDate = headerRow.findIndex(h => h === 'date' || h === 'applied date' || h === 'application date');
+      if (colDate === -1) {
+        colDate = headerRow.findIndex(h => h.includes('date') || h === 'timestamp');
+      }
+
+      // Company: Exact match first, then includes company/employer without location/address/link/web
+      colCompany = headerRow.findIndex(h => h === 'company' || h === 'company name' || h === 'organization' || h === 'employer');
+      if (colCompany === -1) {
+        colCompany = headerRow.findIndex(h =>
+          (h.includes('company') || h.includes('organization') || h.includes('employer')) &&
+          !h.includes('location') && !h.includes('address') && !h.includes('link') && !h.includes('url') && !h.includes('web')
+        );
+      }
+
+      // Position: Exact match first, then substring
+      colPosition = headerRow.findIndex(h => h === 'position' || h === 'role' || h === 'job title' || h === 'title');
+      if (colPosition === -1) {
+        colPosition = headerRow.findIndex(h => h.includes('position') || h.includes('role') || h.includes('job title') || h.includes('title'));
+      }
+
+      // Job Link: Exact match first, then substring excluding how/source/platform
+      colJobLink = headerRow.findIndex(h => h === 'job link' || h === 'link' || h === 'url' || h === 'job url' || h === 'posting url' || h === 'posting link');
+      if (colJobLink === -1) {
+        colJobLink = headerRow.findIndex(h =>
+          (h.includes('link') || h.includes('url') || h.includes('posting')) &&
+          !h.includes('how') && !h.includes('method') && !h.includes('source') && !h.includes('platform')
+        );
+      }
+
+      // How Applied:
+      colHowApplied = headerRow.findIndex(h =>
+        h.includes('how') || h.includes('method') || h.includes('source') || h.includes('platform') || h.includes('channel') || h.includes('via')
+      );
+
+      // Job Type / Nature:
+      colJobType = headerRow.findIndex(h =>
+        (h.includes('type') || h.includes('nature') || h.includes('workplace')) && !h.includes('location')
+      );
 
       // Default fallbacks if header names are generic
-      if (colCompany === -1) colCompany = 0;
-      if (colPosition === -1) colPosition = 1;
-      if (colJobType === -1) colJobType = 2;
+      if (colDate === -1) colDate = 0;
+      if (colCompany === -1) colCompany = 1;
+      if (colPosition === -1) colPosition = 2;
       if (colJobLink === -1) colJobLink = 3;
       if (colHowApplied === -1) colHowApplied = 4;
-      if (colDate === -1) colDate = 5;
 
       const todayStr = DateTimeUtil.getTodayDateStr(); // YYYY-MM-DD
       const todayAlt1 = DateTimeUtil.now().toFormat('dd/MM/yyyy');
@@ -204,17 +246,19 @@ class JobScraperService {
       let duplicateLinksCount = 0;
       let invalidRowsCount = 0;
 
+      const isUrlPattern = (val) => /^https?:\/\//i.test(val) || /www\./i.test(val) || /\.(com|org|net|io|co|ai|dev|app|bd|careers|gov|edu)/i.test(val);
+
       // 2. Iterate and Validate Data Rows
-      for (let i = 1; i < lines.length; i++) {
+      for (let i = headerLineIdx + 1; i < lines.length; i++) {
         const cells = this.parseCsvLine(lines[i]);
         if (cells.length === 0 || !cells.some(c => c.length > 0)) continue;
 
-        const company = (cells[colCompany] || '').trim();
-        const position = (cells[colPosition] || '').trim();
-        const jobType = colJobType < cells.length ? (cells[colJobType] || '').trim() : '';
-        const jobLink = colJobLink < cells.length ? (cells[colJobLink] || '').trim() : '';
-        const howApplied = colHowApplied < cells.length ? (cells[colHowApplied] || '').trim() : '';
-        const dateRaw = colDate < cells.length ? (cells[colDate] || '').trim() : '';
+        const company = (colCompany >= 0 && colCompany < cells.length ? cells[colCompany] : '').trim();
+        const position = (colPosition >= 0 && colPosition < cells.length ? cells[colPosition] : '').trim();
+        const jobType = colJobType >= 0 && colJobType < cells.length ? (cells[colJobType] || '').trim() : '';
+        let jobLink = colJobLink >= 0 && colJobLink < cells.length ? (cells[colJobLink] || '').trim() : '';
+        const howApplied = colHowApplied >= 0 && colHowApplied < cells.length ? (cells[colHowApplied] || '').trim() : '';
+        const dateRaw = colDate >= 0 && colDate < cells.length ? (cells[colDate] || '').trim() : '';
 
         // --- Validation Rules ---
         // Rule A: Company and Position must be non-empty
@@ -224,8 +268,17 @@ class JobScraperService {
         }
 
         // Rule B: Job Link must be present and resemble a URL
-        const isUrlPattern = /^https?:\/\//i.test(jobLink) || /www\./i.test(jobLink) || /\.(com|org|net|io|co|ai|dev|app|bd|careers)/i.test(jobLink);
-        if (!jobLink || jobLink.length < 5 || !isUrlPattern) {
+        // Fallback: If colJobLink doesn't have a URL, search other cells in the row
+        if (!jobLink || !isUrlPattern(jobLink)) {
+          for (let c = 0; c < cells.length; c++) {
+            if (c !== colCompany && c !== colPosition && c !== colDate && isUrlPattern(cells[c].trim())) {
+              jobLink = cells[c].trim();
+              break;
+            }
+          }
+        }
+
+        if (!jobLink || jobLink.length < 5 || !isUrlPattern(jobLink)) {
           invalidRowsCount++;
           continue;
         }
@@ -270,6 +323,7 @@ class JobScraperService {
         // Date check for TODAY
         const fullRowText = lines[i].toLowerCase();
         const isToday =
+          (rowDate && rowDate === todayStr) ||
           fullRowText.includes(todayStr.toLowerCase()) ||
           fullRowText.includes(todayAlt1.toLowerCase()) ||
           fullRowText.includes(todayAlt2.toLowerCase()) ||
@@ -284,7 +338,7 @@ class JobScraperService {
         }
 
         // Date check for THIS WEEK (Sunday to Thursday)
-        let isThisWeek = DateTimeUtil.isInCurrentWeek(dateRaw);
+        let isThisWeek = (rowDate && DateTimeUtil.isInCurrentWeek(rowDate)) || DateTimeUtil.isInCurrentWeek(dateRaw);
         if (!isThisWeek) {
           for (let c = 0; c < cells.length; c++) {
             if (DateTimeUtil.isInCurrentWeek(cells[c])) {

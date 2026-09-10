@@ -63,6 +63,11 @@ class Scheduler {
 
     for (const guild of this.client.guilds.cache.values()) {
       try {
+        if (!cohortManager.isFeatureEnabled(guild.id, 'mentor_briefing')) {
+          Logger.info(`[AdminBriefing] Skipping guild ${guild.id}: Feature 'mentor_briefing' is disabled.`);
+          continue;
+        }
+
         const adminCh = this.getChannel(guild, 'BOT_ADMIN');
         if (!adminCh) continue;
 
@@ -97,7 +102,7 @@ class Scheduler {
 
   /**
    * Morning Attendance Scan from Google Form 'Morning Attendance' tab (Sunday–Thursday at 12:00 PM)
-   * Applies +1 Present, -1 Absent, 0 Leave.
+   * Applies +1 Present, -1 Absent, 0 Leave, 0 Optional.
    */
   async runMorningAttendanceScan() {
     Logger.info("[MorningAttendanceScan] Running 12:00 PM morning attendance scan.");
@@ -105,18 +110,40 @@ class Scheduler {
 
     for (const guild of this.client.guilds.cache.values()) {
       try {
+        if (!cohortManager.isFeatureEnabled(guild.id, 'morning_attendance')) {
+          Logger.info(`[MorningAttendanceScan] Skipping guild ${guild.id}: Feature 'morning_attendance' is disabled.`);
+          continue;
+        }
+
         if (cohortManager.isOffday(guild.id, todayStr) || cohortManager.isMorningOff(guild.id, todayStr)) {
           Logger.info(`[MorningAttendanceScan] Skipping guild ${guild.id}: Morning Basecamp is set to OFF today (${todayStr}).`);
           continue;
         }
 
-        const res = await GasClient.scanMorningAttendance(guild.id, todayStr);
+        // Collect all optional/exempt student Discord IDs for this cohort
+        const rawExempt = cohortManager.getMorningOptionalDiscordIds(guild.id) || [];
+        const exemptSet = new Set(rawExempt);
+        if (guild.members) {
+          guild.members.cache.forEach(member => {
+            if (cohortManager.isMorningOptional(guild.id, member, guild)) {
+              exemptSet.add(member.id);
+            }
+          });
+        }
+        const exemptDiscordIds = Array.from(exemptSet);
+
+        const res = await GasClient.scanMorningAttendance(guild.id, todayStr, { exemptDiscordIds });
         if (res && res.status === 'SUCCESS') {
           const channel = this.getChannel(guild, 'ATTENDANCE') || this.getChannel(guild, 'BOT_ADMIN') || this.getChannel(guild, 'DISCUSSION');
           if (channel) {
             const embed = Embeds.attendanceReport("Morning Attendance Synced", todayStr, res);
             channel.send({ embeds: [embed] }).catch(() => {});
           }
+
+          // Auto-sync updated scores to Scores tab in Google Sheets
+          ScoringService.syncScoresToSheet(guild.id, guild).catch(e => {
+            Logger.error(`[ScoresSync] Failed auto-sync after morning attendance:`, e.message);
+          });
         }
       } catch (err) {
         Logger.error(`Morning attendance scan error for guild ${guild.id}:`, err.message);
@@ -130,6 +157,11 @@ class Scheduler {
     const guilds = targetGuild ? [targetGuild] : Array.from(this.client.guilds.cache.values());
 
     for (const guild of guilds) {
+      if (!cohortManager.isFeatureEnabled(guild.id, 'dropout_predictor')) {
+        Logger.info(`[WeeklyRiskAudit] Skipping guild ${guild.id}: Feature 'dropout_predictor' is disabled.`);
+        continue;
+      }
+
       const scoringStartDate = cohortManager.getScoringStartDate(guild.id);
       if (scoringStartDate && todayStr < scoringStartDate) {
         Logger.info(`[WeeklyRiskAudit] Skipping Thursday risk audit for guild ${guild.id}: Scoring reset until ${scoringStartDate}.`);
@@ -137,7 +169,9 @@ class Scheduler {
       }
 
       await DropoutPredictorService.runWeeklyRiskAuditAndSchedule(guild);
-      await ReferralLockoutService.enforceCohortAccessLocks(guild);
+      if (cohortManager.isFeatureEnabled(guild.id, 'referral_lockout')) {
+        await ReferralLockoutService.enforceCohortAccessLocks(guild);
+      }
     }
   }
 
@@ -151,6 +185,11 @@ class Scheduler {
 
     for (const guild of this.client.guilds.cache.values()) {
       try {
+        if (!cohortManager.isFeatureEnabled(guild.id, 'daily_attendance')) {
+          Logger.info(`[UnifiedDailyAttendance] Skipping guild ${guild.id}: Feature 'daily_attendance' is disabled.`);
+          continue;
+        }
+
         if (cohortManager.isOffday(guild.id, todayStr)) {
           Logger.info(`[UnifiedDailyAttendance] Skipping attendance for guild ${guild.id}: Today is an Offday/Holiday.`);
           continue;
@@ -171,7 +210,14 @@ class Scheduler {
           await this.checkAndWarnInactiveStudents(guild);
 
           // Automatically sync Active / Inactive roles and #resume-needed access
-          await ReferralLockoutService.enforceCohortAccessLocks(guild).catch(() => {});
+          if (cohortManager.isFeatureEnabled(guild.id, 'referral_lockout')) {
+            await ReferralLockoutService.enforceCohortAccessLocks(guild).catch(() => {});
+          }
+
+          // Auto-sync updated scores to Scores tab in Google Sheets
+          ScoringService.syncScoresToSheet(guild.id, guild).catch(e => {
+            Logger.error(`[ScoresSync] Failed auto-sync after daily attendance:`, e.message);
+          });
         }
       } catch (err) {
         Logger.error(`Attendance scan error for guild ${guild.id}:`, err.message);
@@ -202,109 +248,126 @@ class Scheduler {
           continue;
         }
 
-        const cohort = cohortManager.getCohort(guild.id);
-        const target = cohortManager.getDailyJobTarget(guild.id, todayDate);
-        const taskDetails = cohortManager.getDailyJobTaskDetails(guild.id, todayDate);
+        const scraperEnabled = cohortManager.isFeatureEnabled(guild.id, 'job_scraper');
+        const overdueEnabled = cohortManager.isFeatureEnabled(guild.id, 'task_overdue');
 
-        // Fetch roster, linked sheets, and leaves once before the loop
-        const [rosterRes, sheetRes, leavesRes] = await Promise.all([
-          GasClient.getRoster(guild.id).catch(() => ({ students: [] })),
-          GasClient.request(guild.id, 'getJobSheets', {}).catch(() => ({ sheets: [] })),
-          GasClient.getLeaves(guild.id).catch(() => ({ leaves: [] }))
-        ]);
+        if (!scraperEnabled && !overdueEnabled) {
+          Logger.info(`[JobAndTaskEngine] Skipping guild ${guild.id}: Both job_scraper and task_overdue features are disabled.`);
+          continue;
+        }
 
-        const activeStudents = (rosterRes.students || []).filter(s => s.status === 'active');
-        const studentSheetsMap = new Map((sheetRes.sheets || []).map(s => [s.discordId, s.sheetUrl]));
-        const approvedLeaves = (leavesRes.leaves || []).filter(l => String(l.status || '').toUpperCase() === 'APPROVED');
+        if (scraperEnabled) {
+          const cohort = cohortManager.getCohort(guild.id);
+          const target = cohortManager.getDailyJobTarget(guild.id, todayDate);
+          const taskDetails = cohortManager.getDailyJobTaskDetails(guild.id, todayDate);
 
-        const metTargetList = [];
-        const belowTargetList = [];
-        const onLeaveList = [];
+          // Fetch roster, linked sheets, and leaves once before the loop
+          const [rosterRes, sheetRes, leavesRes] = await Promise.all([
+            GasClient.getRoster(guild.id).catch(() => ({ students: [] })),
+            GasClient.request(guild.id, 'getJobSheets', {}).catch(() => ({ sheets: [] })),
+            GasClient.getLeaves(guild.id).catch(() => ({ leaves: [] }))
+          ]);
 
-        for (const student of activeStudents) {
-          const member = guild.members.cache.get(student.discordId);
-          if (member && cohortManager.isStaff(guild.id, member)) continue;
+          const activeStudents = (rosterRes.students || []).filter(s => s.status === 'active');
+          const studentSheetsMap = new Map((sheetRes.sheets || []).map(s => [s.discordId, s.sheetUrl]));
+          const approvedLeaves = (leavesRes.leaves || []).filter(l => String(l.status || '').toUpperCase() === 'APPROVED');
 
-          // ── Leave Safety Check ──
-          const isOnLeave = approvedLeaves.some(l => 
-            l.discordId === student.discordId &&
-            todayDate >= String(l.startDate || '').substring(0, 10) &&
-            todayDate <= String(l.endDate || l.startDate || '').substring(0, 10)
-          );
+          const metTargetList = [];
+          const belowTargetList = [];
+          const onLeaveList = [];
 
-          if (isOnLeave) {
-            onLeaveList.push(student);
-            // Record 0 points (Leave Protected)
+          for (const student of activeStudents) {
+            const member = guild.members.cache.get(student.discordId);
+            if (member && cohortManager.isStaff(guild.id, member)) continue;
+
+            // ── Leave Safety Check ──
+            const isOnLeave = approvedLeaves.some(l => 
+              l.discordId === student.discordId &&
+              todayDate >= String(l.startDate || '').substring(0, 10) &&
+              todayDate <= String(l.endDate || l.startDate || '').substring(0, 10)
+            );
+
+            if (isOnLeave) {
+              onLeaveList.push(student);
+              // Record 0 points (Leave Protected)
+              await GasClient.recordJobDaily(guild.id, {
+                date: todayDate,
+                email: student.email,
+                count: 0,
+                name: student.name || student.username,
+                discordId: student.discordId,
+                totalRows: 0,
+                newRows: 0,
+                points: 0.0,
+                status: "ON_LEAVE"
+              }).catch(() => {});
+              continue;
+            }
+
+            let countToday = 0;
+            let totalRows = 0;
+            const sheetUrl = studentSheetsMap.get(student.discordId);
+
+            if (sheetUrl) {
+              const scrape = await JobScraperService.scrapeStudentJobSheet(sheetUrl, student.discordId);
+              if (scrape.success) {
+                countToday = scrape.datedTodayCount;
+                totalRows = scrape.totalRows;
+              }
+              // Rate-limited delay: 600ms per sheet request
+              await new Promise(r => setTimeout(r, 600));
+            }
+
+            const points = ScoringService.calculateDailyJobScore(countToday, target);
+
+            // Record daily metric to Google Sheets
             await GasClient.recordJobDaily(guild.id, {
               date: todayDate,
               email: student.email,
-              count: 0,
+              count: countToday,
               name: student.name || student.username,
               discordId: student.discordId,
-              totalRows: 0,
-              newRows: 0,
-              points: 0.0,
-              status: "ON_LEAVE"
+              totalRows: totalRows,
+              newRows: countToday,
+              points: points
             }).catch(() => {});
-            continue;
-          }
 
-          let countToday = 0;
-          let totalRows = 0;
-          const sheetUrl = studentSheetsMap.get(student.discordId);
-
-          if (sheetUrl) {
-            const scrape = await JobScraperService.scrapeStudentJobSheet(sheetUrl, student.discordId);
-            if (scrape.success) {
-              countToday = scrape.datedTodayCount;
-              totalRows = scrape.totalRows;
+            if (countToday >= target) {
+              metTargetList.push({ ...student, count: countToday, points });
+            } else {
+              belowTargetList.push({ ...student, count: countToday, points });
             }
-            // Rate-limited delay: 600ms per sheet request
-            await new Promise(r => setTimeout(r, 600));
           }
 
-          const points = ScoringService.calculateDailyJobScore(countToday, target);
+          // Post Job Scraper Summary
+          const jobChannel = this.getChannel(guild, 'JOB_TRACKING');
+          if (jobChannel) {
+            const belowMentions = belowTargetList.map(s => `• <@${s.discordId}> (${s.name}): **${s.count}/${target}** apps (\`${s.points >= 0 ? '+' : ''}${s.points} pts\`)`).join('\n');
+            const metMentions = metTargetList.slice(0, 10).map(s => `• <@${s.discordId}> (${s.name}): **${s.count}/${target}** apps (\`+${s.points} pts\`)`).join('\n');
+            const leaveMentions = onLeaveList.map(s => `• <@${s.discordId}> (${s.name}) — 🌴 Protected (\`0.0 pts\`)`).join('\n');
 
-          // Record daily metric to Google Sheets
-          await GasClient.recordJobDaily(guild.id, {
-            date: todayDate,
-            email: student.email,
-            count: countToday,
-            name: student.name || student.username,
-            discordId: student.discordId,
-            totalRows: totalRows,
-            newRows: countToday,
-            points: points
-          }).catch(() => {});
+            const embed = Embeds.info(
+              `Daily Job Application Audit (12:05 AM) · ${todayDate}`,
+              `**Daily Target:** **${target} Applications**\n\n` +
+              `**🎯 Met / Exceeded Target (${metTargetList.length} students):**\n${metMentions || 'None yet'}\n\n` +
+              `**⚠️ Below Target (${belowTargetList.length} students):**\n${belowMentions || '✅ Everyone met their target today!'}\n\n` +
+              (onLeaveList.length > 0 ? `**🌴 Approved Leave Protected (${onLeaveList.length} students):**\n${leaveMentions}\n\n` : '') +
+              `*Tiered points calculated and synced to Google Sheets database.*`
+            );
 
-          if (countToday >= target) {
-            metTargetList.push({ ...student, count: countToday, points });
-          } else {
-            belowTargetList.push({ ...student, count: countToday, points });
+            await jobChannel.send({ embeds: [embed] }).catch(() => {});
           }
-        }
-
-        // Post Job Scraper Summary
-        const jobChannel = this.getChannel(guild, 'JOB_TRACKING');
-        if (jobChannel) {
-          const belowMentions = belowTargetList.map(s => `• <@${s.discordId}> (${s.name}): **${s.count}/${target}** apps (\`${s.points >= 0 ? '+' : ''}${s.points} pts\`)`).join('\n');
-          const metMentions = metTargetList.slice(0, 10).map(s => `• <@${s.discordId}> (${s.name}): **${s.count}/${target}** apps (\`+${s.points} pts\`)`).join('\n');
-          const leaveMentions = onLeaveList.map(s => `• <@${s.discordId}> (${s.name}) — 🌴 Protected (\`0.0 pts\`)`).join('\n');
-
-          const embed = Embeds.info(
-            `Daily Job Application Audit (12:05 AM) · ${todayDate}`,
-            `**Daily Target:** **${target} Applications**\n\n` +
-            `**🎯 Met / Exceeded Target (${metTargetList.length} students):**\n${metMentions || 'None yet'}\n\n` +
-            `**⚠️ Below Target (${belowTargetList.length} students):**\n${belowMentions || '✅ Everyone met their target today!'}\n\n` +
-            (onLeaveList.length > 0 ? `**🌴 Approved Leave Protected (${onLeaveList.length} students):**\n${leaveMentions}\n\n` : '') +
-            `*Tiered points calculated and synced to Google Sheets database.*`
-          );
-
-          await jobChannel.send({ embeds: [embed] }).catch(() => {});
         }
 
         // ── Execute Task Overdue Audit (-1.0 pt penalty) ──
-        await this.runJobTaskDeadlineAudit(guild);
+        if (overdueEnabled) {
+          await this.runJobTaskDeadlineAudit(guild);
+        }
+
+        // Auto-sync updated scores to Scores tab in Google Sheets
+        ScoringService.syncScoresToSheet(guild.id, guild).catch(e => {
+          Logger.error(`[ScoresSync] Failed auto-sync after job scraper & task engine:`, e.message);
+        });
 
       } catch (err) {
         Logger.error(`Job and Task engine error for guild ${guild.id}:`, err.message);
@@ -320,11 +383,20 @@ class Scheduler {
     Logger.info("[WeeklyClosing] Running 00:20 consolidated weekly closing.");
     for (const guild of this.client.guilds.cache.values()) {
       try {
-        // 1. Publish Weekly Leaderboard with Role Mention (NO @everyone)
-        await this.runWeeklyLeaderboard(guild);
+        if (cohortManager.isFeatureEnabled(guild.id, 'weekly_closing')) {
+          // 1. Publish Weekly Leaderboard with Role Mention (NO @everyone)
+          await this.runWeeklyLeaderboard(guild);
+        }
 
-        // 2. Publish Weekly At-Risk / Dropout Prediction Report to Mentor channel
-        await this.runWeeklyRiskAndOneOnOneSchedule(guild);
+        if (cohortManager.isFeatureEnabled(guild.id, 'dropout_predictor')) {
+          // 2. Publish Weekly At-Risk / Dropout Prediction Report to Mentor channel
+          await this.runWeeklyRiskAndOneOnOneSchedule(guild);
+        }
+
+        // Auto-sync final weekly scores to Scores tab in Google Sheets
+        ScoringService.syncScoresToSheet(guild.id, guild).catch(e => {
+          Logger.error(`[ScoresSync] Failed auto-sync after weekly closing:`, e.message);
+        });
       } catch (err) {
         Logger.error(`Weekly closing error for guild ${guild.id}:`, err.message);
       }
