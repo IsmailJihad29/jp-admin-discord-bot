@@ -40,9 +40,9 @@ module.exports = {
 
         if (sheetUrl) {
           linkedSheetsCount++;
-          const scrape = await JobScraperService.scrapeStudentJobSheet(sheetUrl, student.discordId);
+          const scrape = await JobScraperService.scrapeStudentJobSheet(sheetUrl, student.discordId, { targetDate: todayDate });
           if (scrape.success) {
-            countToday = scrape.datedTodayCount || 0;
+            countToday = scrape.jobsByDate?.[todayDate] || (todayDate === DateTimeUtil.getTodayDateStr() ? (scrape.datedTodayCount || 0) : 0);
             totalRows = scrape.totalRows || 0;
             isScraped = true;
             totalTodayApps += countToday;
@@ -61,6 +61,11 @@ module.exports = {
 
         // Record daily job metric to Apps Script
         if (sheetUrl) {
+          const cohortManager = require('../../config/cohortManager');
+          const ScoringService = require('../../services/scoringService');
+          const target = cohortManager.getDailyJobTarget(guildId, todayDate);
+          const points = ScoringService.calculateDailyJobScore(countToday, target);
+
           await GasClient.recordJobDaily(guildId, {
             date: todayDate,
             email: student.email,
@@ -68,7 +73,8 @@ module.exports = {
             name: result.name,
             discordId: student.discordId,
             totalRows: totalRows,
-            newRows: countToday
+            newRows: countToday,
+            points: points
           }).catch(() => {});
         }
 

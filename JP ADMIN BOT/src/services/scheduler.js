@@ -46,7 +46,10 @@ class Scheduler {
     // 3. Unified Daily Attendance Point Scanner & Inactivity Alerts - 23:45 Sun-Thu
     cron.schedule('45 23 * * 0-4', () => this.runUnifiedDailyAttendanceScan(), { timezone: 'Asia/Dhaka' });
 
-    // 4. Job Scraper (Leave Protected, Rate-Limited) & Task Overdue Engine - 00:05 Daily
+    // 4. Job Scraper (Leave Protected, Rate-Limited) & Task Overdue Engine
+    // - 23:30 Daily: End-of-day audit before midnight
+    cron.schedule('30 23 * * *', () => this.runJobScraperAndTaskOverdueEngine(DateTimeUtil.getTodayDateStr()), { timezone: 'Asia/Dhaka' });
+    // - 00:05 Daily: Midnight final audit for the day that just completed
     cron.schedule('5 0 * * *', () => this.runJobScraperAndTaskOverdueEngine(), { timezone: 'Asia/Dhaka' });
 
     // 5. Consolidated Weekly Closing & Leaderboard - 00:20 Fri (Thu night closing)
@@ -226,19 +229,25 @@ class Scheduler {
   }
 
   /**
-   * Job Scraper & Task Overdue Engine (Daily at 00:05)
+   * Job Scraper & Task Overdue Engine (Daily at 23:30 & 00:05)
    * 1. Rate-limited scraping (1-2 sheets/sec) of full 24h job applications.
    * 2. Leave Safety: Students with APPROVED leave on record are 100% protected (0 penalty, streak protected).
    * 3. Task Overdue Monitor: Automatically deducts -1.0 penalty for tasks past deadline without submission.
    */
-  async runJobScraperAndTaskOverdueEngine() {
-    Logger.info("[JobAndTaskEngine] Running 00:05 Job Scraper & Task Overdue Engine.");
-    const todayDate = DateTimeUtil.getTodayDateStr();
+  async runJobScraperAndTaskOverdueEngine(overrideDate = null) {
+    const nowDhaka = DateTimeUtil.now();
+    // If running in the early morning (e.g. 00:05), audit date is the day that just concluded:
+    const defaultDate = (nowDhaka.hour === 0 && nowDhaka.minute < 30)
+      ? nowDhaka.minus({ days: 1 }).toFormat('yyyy-MM-dd')
+      : DateTimeUtil.getTodayDateStr();
+    const todayDate = overrideDate || defaultDate;
+
+    Logger.info(`[JobAndTaskEngine] Running Job Scraper & Task Overdue Engine for audit date: ${todayDate}.`);
 
     for (const guild of this.client.guilds.cache.values()) {
       try {
         if (cohortManager.isOffday(guild.id, todayDate)) {
-          Logger.info(`[JobAndTaskEngine] Skipping job audit for guild ${guild.id}: Today is an Offday/Holiday.`);
+          Logger.info(`[JobAndTaskEngine] Skipping job audit for guild ${guild.id}: ${todayDate} is an Offday/Holiday.`);
           continue;
         }
 
@@ -309,10 +318,30 @@ class Scheduler {
             const sheetUrl = studentSheetsMap.get(student.discordId);
 
             if (sheetUrl) {
-              const scrape = await JobScraperService.scrapeStudentJobSheet(sheetUrl, student.discordId);
+              const scrape = await JobScraperService.scrapeStudentJobSheet(sheetUrl, student.discordId, { targetDate: todayDate });
               if (scrape.success) {
-                countToday = scrape.datedTodayCount;
-                totalRows = scrape.totalRows;
+                countToday = scrape.jobsByDate?.[todayDate] || (todayDate === DateTimeUtil.getTodayDateStr() ? (scrape.datedTodayCount || 0) : 0);
+                totalRows = scrape.totalRows || 0;
+
+                // Sync all dates detected in student sheet within current week so no applications are missed
+                const datesInSheet = Object.keys(scrape.jobsByDate || {});
+                for (const d of datesInSheet) {
+                  if (d !== todayDate && DateTimeUtil.isInCurrentWeek(d)) {
+                    const dCount = scrape.jobsByDate[d];
+                    const dTarget = cohortManager.getDailyJobTarget(guild.id, d);
+                    const dPoints = ScoringService.calculateDailyJobScore(dCount, dTarget);
+                    GasClient.recordJobDaily(guild.id, {
+                      date: d,
+                      email: student.email,
+                      count: dCount,
+                      name: student.name || student.username,
+                      discordId: student.discordId,
+                      totalRows: totalRows,
+                      newRows: dCount,
+                      points: dPoints
+                    }).catch(() => {});
+                  }
+                }
               }
               // Rate-limited delay: 600ms per sheet request
               await new Promise(r => setTimeout(r, 600));
@@ -347,7 +376,7 @@ class Scheduler {
             const leaveMentions = onLeaveList.map(s => `• <@${s.discordId}> (${s.name}) — 🌴 Protected (\`0.0 pts\`)`).join('\n');
 
             const embed = Embeds.info(
-              `Daily Job Application Audit (12:05 AM) · ${todayDate}`,
+              `Daily Job Application Audit · ${todayDate}`,
               `**Daily Target:** **${target} Applications**\n\n` +
               `**🎯 Met / Exceeded Target (${metTargetList.length} students):**\n${metMentions || 'None yet'}\n\n` +
               `**⚠️ Below Target (${belowTargetList.length} students):**\n${belowMentions || '✅ Everyone met their target today!'}\n\n` +

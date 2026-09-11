@@ -267,6 +267,22 @@ module.exports = {
       if (scrape.success) {
         trackerWeekApps = scrape.datedThisWeekCount ?? 0;
         trackerTotalApps = scrape.datedSinceStartCount ?? (scrape.totalRows ?? 0);
+
+        if (scrape.datedTodayCount > 0) {
+          const todayStr = DateTimeUtil.getTodayDateStr();
+          const target = cohortManager.getDailyJobTarget(guildId, todayStr);
+          const points = ScoringService.calculateDailyJobScore(scrape.datedTodayCount, target);
+          GasClient.recordJobDaily(guildId, {
+            date: todayStr,
+            email: studentProfile?.email || "",
+            count: scrape.datedTodayCount,
+            name: studentProfile?.name || member?.displayName || "Student",
+            discordId: discordId,
+            totalRows: scrape.totalRows,
+            newRows: scrape.datedTodayCount,
+            points: points
+          }).catch(() => {});
+        }
       } else {
         sheetNote = `*(⚠️ Sheet sync issue: ${scrape.error})*`;
       }

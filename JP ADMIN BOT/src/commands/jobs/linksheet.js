@@ -45,6 +45,29 @@ module.exports = {
         // Test scrape to show current stats
         const scrape = await JobScraperService.scrapeStudentJobSheet(studentSheet.sheetUrl, student.id);
 
+        if (scrape.success && scrape.datedTodayCount > 0) {
+          const todayStr = DateTimeUtil.getTodayDateStr();
+          const cohortManager = require('../../config/cohortManager');
+          const ScoringService = require('../../services/scoringService');
+          const target = cohortManager.getDailyJobTarget(guildId, todayStr);
+          const points = ScoringService.calculateDailyJobScore(scrape.datedTodayCount, target);
+
+          GasClient.recordJobDaily(guildId, {
+            date: todayStr,
+            email: studentSheet.email || "",
+            count: scrape.datedTodayCount,
+            name: studentSheet.name || message.author.displayName || message.author.username,
+            discordId: student.id,
+            totalRows: scrape.totalRows,
+            newRows: scrape.datedTodayCount,
+            points: points
+          }).catch(() => {});
+        }
+
+        const recentList = scrape.recentApplications && scrape.recentApplications.length > 0
+          ? scrape.recentApplications.slice(0, 3).map(a => `• \`${a.date}\`: **${a.company}** — *${a.position}*`).join('\n')
+          : null;
+
         const embed = Embeds.info(
           `📊 Your Linked Job Tracker Sheet`,
           `👤 **Student:** <@${student.id}>\n` +
@@ -53,7 +76,9 @@ module.exports = {
           `📅 **Last Verified:** \`${studentSheet.lastScraped || DateTimeUtil.getFullTimestamp()}\`\n\n` +
           `📈 **Live Scrape Statistics:**\n` +
           `• 💼 **Total Logged Applications:** **${scrape.success ? scrape.totalRows : 'N/A'} applications**\n` +
-          `• 📅 **Dated Today (${DateTimeUtil.getTodayDateStr()}):** **${scrape.success ? scrape.datedTodayCount : '0'} applications**\n\n` +
+          `• 📅 **Dated Today (${DateTimeUtil.getTodayDateStr()}):** **${scrape.success ? scrape.datedTodayCount : '0'} applications**\n` +
+          `• 🗓️ **Dated This Week:** **${scrape.success ? scrape.datedThisWeekCount : '0'} applications**\n\n` +
+          (recentList ? `📝 **Latest Applications Detected:**\n${recentList}\n\n` : '') +
           `💡 *Need to update your sheet link? Simply run \`!linksheet <New_Google_Sheet_URL>\`.*`,
           `JP ADMIN ${constants.BOT_VERSION} · Job Tracker`
         );
@@ -116,6 +141,26 @@ module.exports = {
         sheetId: parsed.sheetId,
         gid: parsed.gid
       });
+
+      // 4. Immediately record today's applications to database if any exist
+      if (scrape.datedTodayCount > 0) {
+        const todayStr = DateTimeUtil.getTodayDateStr();
+        const cohortManager = require('../../config/cohortManager');
+        const ScoringService = require('../../services/scoringService');
+        const target = cohortManager.getDailyJobTarget(guildId, todayStr);
+        const points = ScoringService.calculateDailyJobScore(scrape.datedTodayCount, target);
+
+        await GasClient.recordJobDaily(guildId, {
+          date: todayStr,
+          email: studentEmail,
+          count: scrape.datedTodayCount,
+          name: studentName,
+          discordId: student.id,
+          totalRows: scrape.totalRows,
+          newRows: scrape.datedTodayCount,
+          points: points
+        }).catch(() => {});
+      }
 
       const successEmbed = Embeds.success(
         "Job Application Tracker Linked Successfully! 🎉",
