@@ -36,6 +36,7 @@ module.exports = {
             discordId: m.id,
             username: m.user.username,
             displayName: m.displayName,
+            globalName: m.user.globalName || m.user.username,
             status: status
           };
         });

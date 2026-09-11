@@ -525,17 +525,20 @@ function syncRosterData(ss, discordMembers) {
   var existingMapById = {};
   var existingMapByEmail = {};
   var existingMapByUser = {};
+  var existingMapByName = {};
   var botMapRange = botMapSheet.getDataRange();
   var botMapValues = botMapRange.getValues();
 
   for (var j = 1; j < botMapValues.length; j++) {
     var bEmail = String(botMapValues[j][0] || "").trim().toLowerCase();
+    var bName = String(botMapValues[j][1] || "").trim().toLowerCase();
     var bUser = String(botMapValues[j][2] || "").trim().toLowerCase().replace(/^@/, '').split('#')[0].trim();
     var bId = String(botMapValues[j][3] || "").trim();
 
     if (bId) existingMapById[bId] = j;
     if (bEmail) existingMapByEmail[bEmail] = j;
     if (bUser) existingMapByUser[bUser] = j;
+    if (bName) existingMapByName[bName] = j;
   }
 
   var synced = 0;
@@ -543,7 +546,49 @@ function syncRosterData(ss, discordMembers) {
   var rowsToAppend = [];
   var processedBotMapRows = {};
 
-  // 4. Always Sync All Students from 'All Data' into 'Bot_Map'
+  // 4. STEP A: DIRECTLY RESOLVE & BACKFILL ALL EMPTY DISCORD IDs IN Bot_Map FROM DISCORD MEMBERS!
+  for (var k = 1; k < botMapValues.length; k++) {
+    var curEmail = String(botMapValues[k][0] || "").trim().toLowerCase();
+    var curName = String(botMapValues[k][1] || "").trim().toLowerCase();
+    var curRawUser = String(botMapValues[k][2] || "").trim();
+    var curCleanUser = curRawUser.toLowerCase().replace(/^@/, '').split('#')[0].trim();
+    var curId = String(botMapValues[k][3] || "").trim();
+
+    var matchedMember = null;
+    if (curId && memberById[curId]) {
+      matchedMember = memberById[curId];
+    } else {
+      // Empty or unmapped Discord ID: resolve via Discord Username or Display Name
+      if (curCleanUser && memberByUsername[curCleanUser]) {
+        matchedMember = memberByUsername[curCleanUser];
+      } else if (curName && memberByName[curName]) {
+        matchedMember = memberByName[curName];
+      }
+    }
+
+    if (matchedMember) {
+      var changed = false;
+      if (!curId || curId !== matchedMember.discordId) {
+        botMapValues[k][3] = matchedMember.discordId;
+        existingMapById[matchedMember.discordId] = k;
+        changed = true;
+      }
+      if (matchedMember.username && curRawUser !== matchedMember.username) {
+        botMapValues[k][2] = matchedMember.username;
+        changed = true;
+      }
+      if (matchedMember.status && matchedMember.status !== "active" && botMapValues[k][4] === "active") {
+        botMapValues[k][4] = matchedMember.status;
+        changed = true;
+      }
+      if (changed) {
+        synced++;
+      }
+      processedBotMapRows[k] = true;
+    }
+  }
+
+  // 5. STEP B: Always Sync All Students from 'All Data' into 'Bot_Map'
   allDataStudents.forEach(function(student) {
     var cleanUName = student.username;
     var cleanEmail = student.email.toLowerCase();
@@ -563,18 +608,19 @@ function syncRosterData(ss, discordMembers) {
       rowIdx = existingMapByEmail[cleanEmail];
     } else if (cleanUName && existingMapByUser[cleanUName] !== undefined) {
       rowIdx = existingMapByUser[cleanUName];
+    } else if (cleanName && existingMapByName[cleanName] !== undefined) {
+      rowIdx = existingMapByName[cleanName];
     }
 
     if (rowIdx > 0 && botMapValues[rowIdx]) {
       botMapValues[rowIdx][0] = student.email || botMapValues[rowIdx][0];
       botMapValues[rowIdx][1] = student.name || botMapValues[rowIdx][1];
       botMapValues[rowIdx][2] = currentUsername || botMapValues[rowIdx][2];
-      if (dId) botMapValues[rowIdx][3] = dId;
-      botMapValues[rowIdx][4] = status;
+      if (dId && !botMapValues[rowIdx][3]) botMapValues[rowIdx][3] = dId;
+      if (status && botMapValues[rowIdx][4] === "active") botMapValues[rowIdx][4] = status;
       botMapValues[rowIdx][5] = student.region || botMapValues[rowIdx][5];
       botMapValues[rowIdx][6] = student.subregion || botMapValues[rowIdx][6];
       botMapValues[rowIdx][7] = student.phone || botMapValues[rowIdx][7];
-      botMapValues[rowIdx][8] = "All Data Sync";
       processedBotMapRows[rowIdx] = true;
       synced++;
     } else {
@@ -594,41 +640,6 @@ function syncRosterData(ss, discordMembers) {
     }
   });
 
-  // 5. Also sync any Discord members who might not be in 'All Data' yet
-  if (discordMembers && Array.isArray(discordMembers)) {
-    discordMembers.forEach(function(m) {
-      var dId = String(m.discordId || m.id || "").trim();
-      var rawUsername = String(m.username || "").trim();
-      var cleanUsername = rawUsername.toLowerCase().replace(/^@/, '').split('#')[0].trim();
-      var displayName = String(m.displayName || m.name || "").trim();
-
-      if (!dId) return;
-
-      var rowIdx = existingMapById[dId];
-      if (rowIdx !== undefined && !processedBotMapRows[rowIdx]) {
-        botMapValues[rowIdx][2] = rawUsername;
-        botMapValues[rowIdx][3] = dId;
-        botMapValues[rowIdx][4] = m.status || "active";
-        processedBotMapRows[rowIdx] = true;
-        synced++;
-      } else if (rowIdx === undefined && !allDataStudents.some(function(s) { return s.username === cleanUsername; })) {
-        rowsToAppend.push([
-          m.email || "",
-          displayName || rawUsername,
-          rawUsername,
-          dId,
-          m.status || "active",
-          m.region || "",
-          m.subregion || "",
-          m.phone || "",
-          "Discord Sync",
-          ""
-        ]);
-        added++;
-      }
-    });
-  }
-
   // 6. Write updates to Bot_Map sheet
   if (botMapValues.length > 1 && synced > 0) {
     botMapSheet.getRange(1, 1, botMapValues.length, botMapValues[0].length).setValues(botMapValues);
@@ -638,6 +649,9 @@ function syncRosterData(ss, discordMembers) {
     var startRow = botMapSheet.getLastRow() + 1;
     botMapSheet.getRange(startRow, 1, rowsToAppend.length, rowsToAppend[0].length).setValues(rowsToAppend);
   }
+
+  // 7. ALWAYS sync Attendance Roster immediately so Attendance sheet gets all resolved Discord IDs!
+  syncAttendanceRosterStudents(ss);
 
   return { status: "SUCCESS", syncedCount: synced, addedCount: added, totalAllData: allDataStudents.length };
 }
@@ -740,10 +754,13 @@ function parseDateToYMD(val, timezone) {
 
   var dObj = new Date(s);
   if (!isNaN(dObj.getTime())) {
-    return Utilities.formatDate(dObj, tz, "yyyy-MM-dd");
+    var yr = dObj.getFullYear();
+    if (yr >= 2020 && yr <= 2050) {
+      return Utilities.formatDate(dObj, tz, "yyyy-MM-dd");
+    }
   }
 
-  return s.substring(0, 10);
+  return "";
 }
 
 /**
@@ -784,6 +801,7 @@ function syncAttendanceRosterStudents(ss) {
   // Index active Bot_Map profiles
   var botMapById = {};
   var botMapByEmail = {};
+  var botMapByName = {};
   for (var b = 1; b < botMapValues.length; b++) {
     var bEmail = String(botMapValues[b][0] || "").toLowerCase().trim();
     var bName = String(botMapValues[b][1] || "").trim();
@@ -808,6 +826,7 @@ function syncAttendanceRosterStudents(ss) {
 
     if (bId) botMapById[bId] = studentObj;
     if (bEmail) botMapByEmail[bEmail] = studentObj;
+    if (bName) botMapByName[bName.toLowerCase()] = studentObj;
   }
 
   var existingIds = {};
@@ -816,10 +835,11 @@ function syncAttendanceRosterStudents(ss) {
 
   // 1. Update existing Attendance rows with canonical Name, Email, Phone, Discord ID, Status from Bot_Map
   for (var r = 1; r < attValues.length; r++) {
-    var dId = String(attValues[r][3] || "").trim();
+    var name = String(attValues[r][0] || "").trim().toLowerCase();
     var email = String(attValues[r][1] || "").toLowerCase().trim();
+    var dId = String(attValues[r][3] || "").trim();
 
-    var matchedBm = (dId && botMapById[dId]) || (email && botMapByEmail[email]);
+    var matchedBm = (dId && botMapById[dId]) || (email && botMapByEmail[email]) || (name && botMapByName[name]);
     if (matchedBm) {
       if (attValues[r][0] !== matchedBm.name) { attValues[r][0] = matchedBm.name; needsAttRewrite = true; }
       if (attValues[r][1] !== matchedBm.email) { attValues[r][1] = matchedBm.email; needsAttRewrite = true; }
@@ -1058,7 +1078,7 @@ function getAttendanceData(ss) {
 
   var values = sheet.getDataRange().getValues();
   var headers = values[0];
-  var dates = [];
+  var dateCols = [];
 
   for (var c = 6; c < headers.length; c++) {
     var hVal = headers[c];
@@ -1069,15 +1089,19 @@ function getAttendanceData(ss) {
     } else {
       dStr = String(hVal).trim();
     }
-    dates.push(dStr);
+    var pDate = parseDateToYMD(dStr);
+    if (!pDate || !/^\d{4}-\d{2}-\d{2}$/.test(pDate)) {
+      continue; // Skip non-date helper columns like "Absent Streack"
+    }
+    dateCols.push({ colIndex: c, header: dStr });
   }
 
   var rows = [];
   for (var i = 1; i < values.length; i++) {
     var row = values[i];
     var sessionMarks = {};
-    for (var d = 0; d < dates.length; d++) {
-      sessionMarks[dates[d]] = row[6 + d] || "A";
+    for (var d = 0; d < dateCols.length; d++) {
+      sessionMarks[dateCols[d].header] = row[dateCols[d].colIndex] || "A";
     }
     rows.push({
       name: row[0],
@@ -1090,7 +1114,7 @@ function getAttendanceData(ss) {
     });
   }
 
-  return { dates: dates, rows: rows };
+  return { dates: dateCols.map(function(item) { return item.header; }), rows: rows };
 }
 
 /**
@@ -3132,6 +3156,13 @@ function syncScoresData(ss, data) {
   var updatedScoresCount = 0;
   var headers = SCHEMA_DEFS["Scores"];
 
+  // Ensure headers exist if sheet was blank
+  if (scoresSheet.getLastRow() === 0) {
+    scoresSheet.appendRow(headers);
+    scoresSheet.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#e2e8f0");
+    scoresSheet.setFrozenRows(1);
+  }
+
   // 1. Write or update Scores tab
   if (scoresSheet && scoresList.length > 0) {
     var nowStr = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
@@ -3163,13 +3194,21 @@ function syncScoresData(ss, data) {
     // Clear existing data (keep header)
     var lastRow = scoresSheet.getLastRow();
     if (lastRow > 1) {
-      scoresSheet.getRange(2, 1, lastRow - 1, scoresSheet.getLastColumn()).clearContent();
+      var clearCols = Math.max(scoresSheet.getLastColumn(), headers.length);
+      scoresSheet.getRange(2, 1, lastRow - 1, clearCols).clearContent();
     }
 
     if (rows.length > 0) {
       scoresSheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
       updatedScoresCount = rows.length;
     }
+  }
+
+  // Ensure headers exist for Point_Ledger if sheet was blank
+  if (ledgerSheet.getLastRow() === 0) {
+    ledgerSheet.appendRow(SCHEMA_DEFS["Point_Ledger"]);
+    ledgerSheet.getRange(1, 1, 1, SCHEMA_DEFS["Point_Ledger"].length).setFontWeight("bold").setBackground("#e2e8f0");
+    ledgerSheet.setFrozenRows(1);
   }
 
   // 2. Append new ledger entries to Point_Ledger tab
@@ -3186,7 +3225,7 @@ function syncScoresData(ss, data) {
         String(entry.name || entry.studentName || "").trim(),
         String(entry.category || "General"),
         String(entry.eventSource || entry.source || "System"),
-        Number(entry.pointsAwarded || entry.points || 0),
+        Number(entry.pointsAwarded !== undefined ? entry.pointsAwarded : (entry.points || 0)),
         Number(entry.runningWeeklyTotal || 0),
         Number(entry.runningLifetimeTotal || 0),
         String(entry.remarks || entry.note || "")
@@ -3194,8 +3233,17 @@ function syncScoresData(ss, data) {
     });
 
     if (ledgerRows.length > 0) {
-      var nextRow = ledgerSheet.getLastRow() + 1;
-      ledgerSheet.getRange(nextRow, 1, ledgerRows.length, SCHEMA_DEFS["Point_Ledger"].length).setValues(ledgerRows);
+      if (data.replaceLedger || data.rebuildLedger) {
+        var lastLRow = ledgerSheet.getLastRow();
+        if (lastLRow > 1) {
+          var clearLCols = Math.max(ledgerSheet.getLastColumn(), SCHEMA_DEFS["Point_Ledger"].length);
+          ledgerSheet.getRange(2, 1, lastLRow - 1, clearLCols).clearContent();
+        }
+        ledgerSheet.getRange(2, 1, ledgerRows.length, SCHEMA_DEFS["Point_Ledger"].length).setValues(ledgerRows);
+      } else {
+        var nextRow = Math.max(ledgerSheet.getLastRow() + 1, 2);
+        ledgerSheet.getRange(nextRow, 1, ledgerRows.length, SCHEMA_DEFS["Point_Ledger"].length).setValues(ledgerRows);
+      }
       addedLedgerCount = ledgerRows.length;
     }
   }
@@ -3294,9 +3342,12 @@ function getPointLedgerData(ss, discordId, limit) {
     var rowDiscordId = String(row[2] || "").trim();
 
     if (!cleanId || rowDiscordId === cleanId) {
+      var tsStr = row[0] instanceof Date ? Utilities.formatDate(row[0], CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss") : String(row[0] || "");
+      var dateStr = row[1] instanceof Date ? Utilities.formatDate(row[1], CONFIG.TIMEZONE, "yyyy-MM-dd") : String(row[1] || "");
+
       entries.push({
-        timestamp: row[0],
-        date: row[1],
+        timestamp: tsStr,
+        date: dateStr,
         discordId: rowDiscordId,
         name: row[3],
         category: row[4],

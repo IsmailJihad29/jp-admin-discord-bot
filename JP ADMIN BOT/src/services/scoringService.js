@@ -598,20 +598,290 @@ class ScoringService {
       });
 
       // 4. Build Point Ledger audit entries
-      const ledgerEntries = options.ledgerEntries || [];
+      const cohortManager = require('../config/cohortManager');
+      const cohortStartDate = cohortManager.getScoringStartDate(guildId) || '2026-09-06';
+
+      let ledgerEntries = options.ledgerEntries;
+      if (!ledgerEntries || ledgerEntries.length === 0) {
+        ledgerEntries = this.generateLedgerEntries(guildId, {
+          cachedData,
+          lifetimeStandings,
+          cohortStartDate,
+          isApprovedLeaveDay
+        });
+      }
 
       // 5. Send to Google Apps Script
       const res = await GasClient.syncScores(guildId, {
         scores: scoreRows,
-        ledgerEntries: ledgerEntries
+        ledgerEntries: ledgerEntries,
+        replaceLedger: true
       });
 
-      Logger.info(`[ScoresSync] Successfully synced ${scoreRows.length} student scores to Google Sheets for guild ${guildId}.`);
-      return { success: true, scoresCount: scoreRows.length, gasResponse: res };
+      Logger.info(`[ScoresSync] Successfully synced ${scoreRows.length} student scores and ${ledgerEntries.length} ledger entries to Google Sheets for guild ${guildId}.`);
+      return { success: true, scoresCount: scoreRows.length, ledgerCount: ledgerEntries.length, gasResponse: res };
     } catch (err) {
       Logger.error(`[ScoresSync] Failed to sync scores for guild ${guildId}:`, err.message);
       return { success: false, error: err.message };
     }
+  }
+
+  /**
+   * Generates comprehensive chronological point ledger audit entries for all students
+   * from attendance records, daily jobs, streaks, interviews, job tasks, and adjustments.
+   */
+  static generateLedgerEntries(guildId, options = {}) {
+    const cohortManager = require('../config/cohortManager');
+    const scoring = cohortManager.getCohortScoring(guildId);
+    const cohortTarget = scoring.jobTarget || constants.SCORING.DEFAULT_JOB_TARGET;
+    const cohortStartDate = options.cohortStartDate || cohortManager.getScoringStartDate(guildId) || scoring.scoringStartDate || "2026-09-06";
+    const todayStr = DateTimeUtil.getTodayDateStr();
+    const nowDhaka = DateTimeUtil.now();
+    const isBeforeNightCutoff = (nowDhaka.hour < 23 || (nowDhaka.hour === 23 && nowDhaka.minute < 30));
+
+    const cachedData = options.cachedData || {};
+    const lifetimeStandings = options.lifetimeStandings || [];
+    const isApprovedLeaveDay = options.isApprovedLeaveDay;
+
+    const attRows = cachedData.attendanceRes?.rows || cachedData.attendanceRes?.attendance || [];
+    const jobsList = cachedData.jobsRes?.jobs || [];
+    const interviewsList = cachedData.interviewsRes?.interviews || [];
+    const tasksList = cachedData.tasksRes?.tasks || [];
+    const cohort = cohortManager.getCohort(guildId);
+    const manualAdjs = cohort?.manualAdjustments || {};
+
+    const approvedLeavesList = (cachedData.leavesRes?.leaves || []).filter(l => String(l.status || '').toUpperCase() === 'APPROVED');
+    const checkLeave = isApprovedLeaveDay || ((student, dYmd) => {
+      if (!student || !dYmd) return false;
+      const dId = String(student.discordId || '').trim();
+      const em = String(student.email || '').toLowerCase().trim();
+      const nm = String(student.name || '').toLowerCase().trim();
+      return approvedLeavesList.some(l => {
+        const lStart = DateTimeUtil.normalizeDateStr(l.startDate);
+        const lEnd = DateTimeUtil.normalizeDateStr(l.endDate) || lStart;
+        if (!lStart || dYmd < lStart || dYmd > lEnd) return false;
+        if (dId && l.discordId && dId === String(l.discordId).trim()) return true;
+        if (em && l.email && em === String(l.email).toLowerCase().trim()) return true;
+        if (nm && l.name && nm === String(l.name).toLowerCase().trim()) return true;
+        return false;
+      });
+    });
+
+    const allLedgerEntries = [];
+
+    lifetimeStandings.forEach(student => {
+      if (!student) return;
+      const studentId = String(student.discordId || '').trim();
+      const studentEmail = String(student.email || '').toLowerCase().trim();
+      const studentName = String(student.name || '').toLowerCase().trim();
+      const studentUser = String(student.username || '').toLowerCase().replace(/^@/, '').split('#')[0].trim();
+
+      const isStudentMatch = (item) => {
+        if (!item) return false;
+        const iId = String(item.discordId || item.id || '').trim();
+        const iEmail = String(item.email || '').toLowerCase().trim();
+        const iRawUser = item.username || item.user || '';
+        const iUser = iRawUser ? String(iRawUser).toLowerCase().replace(/^@/, '').split('#')[0].trim() : '';
+        const iName = (item.studentName || item.name || item.displayName) ? String(item.studentName || item.name || item.displayName).toLowerCase().trim() : '';
+
+        if (studentId && iId && studentId === iId) return true;
+        if (studentEmail && iEmail && studentEmail === iEmail) return true;
+        if (studentUser && iUser && studentUser === iUser) return true;
+        if (studentName && iName && studentName === iName) return true;
+        return false;
+      };
+
+      const studentStartDate = student.attendanceStartDate || cohortStartDate;
+      const studentTxList = [];
+
+      // 1. Attendance Transactions
+      const attRow = attRows.find(r => isStudentMatch(r));
+
+      if (attRow && attRow.sessions && typeof attRow.sessions === 'object') {
+        Object.entries(attRow.sessions).forEach(([sessionDate, mark]) => {
+          const datePart = DateTimeUtil.normalizeDateStr(sessionDate);
+          if (!datePart || datePart < studentStartDate || datePart > todayStr) return;
+
+          const isMorning = sessionDate.toLowerCase().includes('morning');
+          if (isMorning) {
+            if (!cohortManager.isFeatureEnabled(guildId, 'morning_attendance')) return;
+            if (cohortManager.isMorningOff(guildId, datePart)) return;
+          } else {
+            if (!cohortManager.isFeatureEnabled(guildId, 'daily_attendance')) return;
+          }
+
+          const m = String(mark || "").toUpperCase().trim();
+          if (m === 'OFF' || m === '0' || m === 'OPT' || m === 'EXEMPT' || m === '') {
+            return;
+          }
+
+          let pts = 0;
+          let remarks = "";
+          const isMorningOpt = isMorning && cohortManager.isMorningOptional(guildId, student.discordId);
+          const onLeave = checkLeave(student, datePart) || m === 'L' || m === 'LEAVE' || m.startsWith('L') || m === 'EXCUSED';
+
+          if (onLeave) {
+            pts = 0;
+            remarks = "Approved Leave (Excused)";
+          } else if (m === 'P' || m === 'PRESENT' || m.startsWith('P')) {
+            pts = scoring.attendancePresent;
+            remarks = "Present";
+          } else if (m === 'A' || m === 'ABSENT' || m.startsWith('A')) {
+            if (isMorningOpt) return;
+            pts = scoring.attendanceAbsent;
+            remarks = "Absent";
+          } else {
+            return;
+          }
+
+          const sourceLabel = isMorning ? "Morning Attendance" : (sessionDate.toLowerCase().includes('nlap') ? "NLAP Attendance" : "Daily Attendance");
+          studentTxList.push({
+            timestamp: `${datePart} ${isMorning ? '12:00:00' : '23:45:00'}`,
+            date: datePart,
+            discordId: student.discordId || "",
+            name: student.name || "Student",
+            category: "Attendance",
+            eventSource: sourceLabel,
+            pointsAwarded: pts,
+            remarks: remarks
+          });
+        });
+      }
+
+      // 2. Job Application Transactions
+      const studentJobs = jobsList.filter(j => isStudentMatch(j));
+
+      const jobsByDate = new Map();
+      studentJobs.forEach(jobDay => {
+        const d = DateTimeUtil.normalizeDateStr(jobDay.date);
+        if (!d || d < studentStartDate || d > todayStr) return;
+        const count = Number(jobDay.count) || 0;
+        if (!jobsByDate.has(d) || count > jobsByDate.get(d).count) {
+          jobsByDate.set(d, { ...jobDay, normDate: d, count });
+        }
+      });
+
+      Array.from(jobsByDate.values()).forEach(jobDay => {
+        const onLeave = jobDay.status === 'ON_LEAVE' || checkLeave(student, jobDay.normDate);
+        let dayPts = 0;
+        let remarks = `${jobDay.count} applications logged`;
+
+        if (onLeave) {
+          dayPts = 0;
+          remarks = "Leave Protected (0 pts)";
+        } else {
+          dayPts = ScoringService.calculateDailyJobScore(jobDay.count, cohortTarget);
+          if (jobDay.normDate === todayStr && isBeforeNightCutoff && dayPts < 0) {
+            dayPts = 0;
+            remarks = `${jobDay.count} applications logged (In progress)`;
+          }
+        }
+
+        if (dayPts !== 0 || jobDay.count > 0 || onLeave) {
+          studentTxList.push({
+            timestamp: `${jobDay.normDate} 23:50:00`,
+            date: jobDay.normDate,
+            discordId: student.discordId || "",
+            name: student.name || "Student",
+            category: "Job Applications",
+            eventSource: "Job Tracker Sheet",
+            pointsAwarded: dayPts,
+            remarks: remarks
+          });
+        }
+      });
+
+      // 3. Application Streak Bonus
+      if (student.streakBonus && student.streakBonus > 0) {
+        studentTxList.push({
+          timestamp: `${todayStr} 23:55:00`,
+          date: todayStr,
+          discordId: student.discordId || "",
+          name: student.name || "Student",
+          category: "Streak Bonus",
+          eventSource: "Application Streak",
+          pointsAwarded: student.streakBonus,
+          remarks: `Application streak bonus (+${student.streakBonus} pts)`
+        });
+      }
+
+      // 4. Interviews
+      interviewsList.forEach(item => {
+        if (!isStudentMatch(item)) return;
+        const itemStatus = String(item.status || '').toUpperCase();
+        const companyName = String(item.company || '').toUpperCase();
+        if (itemStatus === 'VOIDED' || companyName.startsWith('[VOIDED]')) return;
+        const iDate = DateTimeUtil.normalizeDateStr(item.interviewDate || item.date || item.loggedDate);
+        if (!iDate || iDate < studentStartDate) return;
+
+        studentTxList.push({
+          timestamp: `${iDate} 15:00:00`,
+          date: iDate,
+          discordId: student.discordId || "",
+          name: student.name || "Student",
+          category: "Interviews",
+          eventSource: "Verified Interview",
+          pointsAwarded: scoring.interviewPoints || 5,
+          remarks: `Interview: ${item.company || 'Company'} (${item.roleDetails || item.role || 'Role'})`
+        });
+      });
+
+      // 5. Job Tasks
+      tasksList.forEach(task => {
+        if (!isStudentMatch(task)) return;
+        const tDate = DateTimeUtil.normalizeDateStr(task.submittedAt || task.timestamp || task.createdAt);
+        if (!tDate || tDate < studentStartDate) return;
+
+        studentTxList.push({
+          timestamp: `${tDate} 16:00:00`,
+          date: tDate,
+          discordId: student.discordId || "",
+          name: student.name || "Student",
+          category: "Job Tasks",
+          eventSource: "Completed Task",
+          pointsAwarded: Number(task.pointsAwarded) || (constants.SCORING.TASK_POINTS || 5),
+          remarks: `Task: ${task.role || 'Role'} at ${task.company || 'Company'}`
+        });
+      });
+
+      // 6. Manual Adjustments
+      const adjs = (student.discordId && manualAdjs[student.discordId]) ||
+                   (student.email && manualAdjs[student.email]) ||
+                   (student.name && manualAdjs[student.name]) || [];
+      adjs.forEach(adj => {
+        const aDate = DateTimeUtil.normalizeDateStr(adj.date || adj.at) || todayStr;
+        if (aDate < studentStartDate) return;
+        studentTxList.push({
+          timestamp: adj.at || `${aDate} 12:00:00`,
+          date: aDate,
+          discordId: student.discordId || "",
+          name: student.name || "Student",
+          category: "Manual Adjustment",
+          eventSource: `Mentor (${adj.by || 'Admin'})`,
+          pointsAwarded: Number(adj.amount) || 0,
+          remarks: adj.reason || "Manual point adjustment"
+        });
+      });
+
+      // Sort student transactions chronologically
+      studentTxList.sort((a, b) => (a.timestamp || a.date).localeCompare(b.timestamp || b.date));
+
+      let runningLife = 0;
+      let runningWeek = 0;
+      studentTxList.forEach(tx => {
+        runningLife += tx.pointsAwarded;
+        if (DateTimeUtil.isInCurrentWeek(tx.date)) {
+          runningWeek += tx.pointsAwarded;
+        }
+        tx.runningLifetimeTotal = Math.round(runningLife * 10) / 10;
+        tx.runningWeeklyTotal = Math.round(runningWeek * 10) / 10;
+        allLedgerEntries.push(tx);
+      });
+    });
+
+    // Sort all ledger entries chronologically
+    allLedgerEntries.sort((a, b) => (a.timestamp || a.date).localeCompare(b.timestamp || b.date));
+    return allLedgerEntries;
   }
 
   /**

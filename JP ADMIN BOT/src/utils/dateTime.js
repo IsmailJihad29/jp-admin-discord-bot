@@ -81,10 +81,13 @@ class DateTimeUtil {
     try {
       const d = new Date(str);
       if (!isNaN(d.getTime())) {
-        return DateTime.fromJSDate(d).setZone(timezone).toFormat('yyyy-MM-dd');
+        const dt = DateTime.fromJSDate(d).setZone(timezone);
+        if (dt.isValid && dt.year >= 2020 && dt.year <= 2050) {
+          return dt.toFormat('yyyy-MM-dd');
+        }
       }
     } catch (e) {}
-    return String(raw).substring(0, 10);
+    return null;
   }
 
   static getCurrentWeekRange(timezone = 'Asia/Dhaka') {

@@ -30,12 +30,13 @@ module.exports = {
       }
 
       const embed = Embeds.success(
-        "Student Scores Pre-Calculated & Synced! ⚡",
-        `✅ Successfully calculated and stored performance data in your Google Spreadsheet **\`Scores\`** tab!\n\n` +
+        "Student Scores & Point Ledger Synced! ⚡",
+        `✅ Successfully calculated and stored performance data in your Google Spreadsheet **\`Scores\`** and **\`Point_Ledger\`** tabs!\n\n` +
         `• 👥 **Students Synced:** **${result.scoresCount} students**\n` +
+        `• 📜 **Point Ledger Entries:** **${result.ledgerCount || result.gasResponse?.ledgerEntriesAdded || 0} transactions**\n` +
         `• 📅 **Weekly Metrics:** Weekly Total Points, Attendance, Jobs, Streak, Interviews, Tasks, Weekly Rank & Active/Inactive Status\n` +
         `• 📈 **Lifetime Metrics:** Lifetime Points, Attendance, Jobs, Streak, Interviews, Tasks & Lifetime Rank\n` +
-        `• ⚡ **Performance Benefit:** Commands like \`!myhealth\` will now load instantly from the sheet cache instead of reprocessing 6 raw tabs.\n\n` +
+        `• ⚡ **Performance Benefit:** Commands like \`!myhealth\` will now load instantly from the sheet cache and display recent point ledger transactions.\n\n` +
         `💡 *Students can check their health anytime via \`!myhealth\` or the interactive health check button.*`,
         `JP ADMIN ${constants.BOT_VERSION} · ${DateTimeUtil.getFullTimestamp()}`
       );
