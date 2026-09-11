@@ -394,53 +394,6 @@ function getRosterData(ss) {
     }
   }
 
-  // Also include any students from 'All Data' master tab that aren't yet in Bot_Map
-  if (allDataSheet && allDataSheet.getLastRow() > 1) {
-    var allDataRows = allDataSheet.getDataRange().getValues();
-    var headers = allDataRows[0];
-
-    var nameCol = findHeaderColumnIndex(headers, ["Name", "Full Name", "Student Name"]);
-    var emailCol = findHeaderColumnIndex(headers, ["Your Course Email Address", "Course Email Address", "Course Email", "Email Address", "Email"]);
-    var phoneCol = findHeaderColumnIndex(headers, ["Mobile Number", "Mobile", "Phone Number", "Phone", "WhatsApp Number"]);
-    var discordCol = findHeaderColumnIndex(headers, ["Discord Username", "Discord Handle", "Discord User", "Discord Tag", "Discord"]);
-    var regionCol = findHeaderColumnIndex(headers, ["Region", "Location"]);
-    var subregionCol = findHeaderColumnIndex(headers, ["Subregion", "Area"]);
-
-    for (var k = 1; k < allDataRows.length; k++) {
-      var aRow = allDataRows[k];
-      var aName = String(nameCol >= 0 ? aRow[nameCol] : "").trim();
-      var aEmail = String(emailCol >= 0 ? aRow[emailCol] : "").trim();
-      var aPhone = String(phoneCol >= 0 ? aRow[phoneCol] : "").trim();
-      var aUsername = String(discordCol >= 0 ? aRow[discordCol] : "").trim();
-      var cleanUserA = aUsername.toLowerCase().replace(/^@/, '').split('#')[0].trim();
-      var aRegion = String(regionCol >= 0 ? aRow[regionCol] : "").trim();
-      var aSubregion = String(subregionCol >= 0 ? aRow[subregionCol] : "").trim();
-
-      var isKnown = (aEmail && seenEmails[aEmail.toLowerCase()]) ||
-                    (cleanUserA && seenUsers[cleanUserA]) ||
-                    (aName && seenNames[aName.toLowerCase()]);
-
-      if (!isKnown && (aName || aEmail || aUsername)) {
-        students.push({
-          email: aEmail,
-          name: aName,
-          username: aUsername,
-          discordId: "",
-          status: "active",
-          region: aRegion,
-          subregion: aSubregion,
-          phone: aPhone,
-          matchSource: "All Data Master",
-          reviewNote: "",
-          rowIndex: k + 1
-        });
-        if (aEmail) seenEmails[aEmail.toLowerCase()] = true;
-        if (cleanUserA) seenUsers[cleanUserA] = true;
-        if (aName) seenNames[aName.toLowerCase()] = true;
-      }
-    }
-  }
-
   return { students: students };
 }
 
@@ -623,31 +576,14 @@ function syncRosterData(ss, discordMembers) {
       botMapValues[rowIdx][7] = student.phone || botMapValues[rowIdx][7];
       processedBotMapRows[rowIdx] = true;
       synced++;
-    } else {
-      rowsToAppend.push([
-        student.email,
-        student.name,
-        currentUsername,
-        dId,
-        status,
-        student.region,
-        student.subregion,
-        student.phone,
-        "All Data Master",
-        ""
-      ]);
-      added++;
     }
+    // Strict rule: Never append new students to Bot_Map!
+    // Bot_Map is the sole authoritative list managed by the cohort supervisors.
   });
 
-  // 6. Write updates to Bot_Map sheet
+  // 6. Write updates to Bot_Map sheet (in-place updates only)
   if (botMapValues.length > 1 && synced > 0) {
     botMapSheet.getRange(1, 1, botMapValues.length, botMapValues[0].length).setValues(botMapValues);
-  }
-
-  if (rowsToAppend.length > 0) {
-    var startRow = botMapSheet.getLastRow() + 1;
-    botMapSheet.getRange(startRow, 1, rowsToAppend.length, rowsToAppend[0].length).setValues(rowsToAppend);
   }
 
   // 7. ALWAYS sync Attendance Roster immediately so Attendance sheet gets all resolved Discord IDs!

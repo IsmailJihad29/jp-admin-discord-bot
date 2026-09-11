@@ -95,7 +95,7 @@ class ScoringService {
     const byUsername = new Map();
     const byName = new Map();
 
-    const getOrCreateStudent = (data) => {
+    const findStudent = (data) => {
       if (!data) return null;
       const discordId = String(data.discordId || data.id || "").trim();
       const email = String(data.email || "").toLowerCase().trim();
@@ -103,89 +103,59 @@ class ScoringService {
       const username = rawUser.toLowerCase().replace(/^@/, '').split('#')[0].trim();
       const name = String(data.name || data.studentName || data.displayName || "").trim();
 
-      // Check if student already exists in index
-      let student = null;
-      if (discordId && byDiscordId.has(discordId)) student = byDiscordId.get(discordId);
-      else if (email && byEmail.has(email)) student = byEmail.get(email);
-      else if (username && byUsername.has(username)) student = byUsername.get(username);
-      else if (name && byName.has(name.toLowerCase())) student = byName.get(name.toLowerCase());
-
-      if (!student) {
-        student = {
-          discordId: discordId,
-          name: name || username || email || (discordId ? `Student (${discordId.slice(-4)})` : 'Student'),
-          username: username || rawUser,
-          email: email,
-          phone: data.phone || '',
-          status: data.status || 'active',
-          attendancePoints: 0,
-          jobPoints: 0,
-          jobTotalApps: 0,
-          streakBonus: 0,
-          interviewPoints: 0,
-          interviewCount: 0,
-          taskPoints: 0,
-          taskCount: 0,
-          totalPoints: 0
-        };
-        studentsList.push(student);
-      } else {
-        // Enrich missing fields
-        if (!student.discordId && discordId) student.discordId = discordId;
-        if (!student.email && email) student.email = email;
-        if (!student.username && username) student.username = username;
-        if ((!student.name || student.name === 'Student') && name) student.name = name;
-        if (!student.phone && data.phone) student.phone = data.phone;
-      }
-
-      // Update index mappings
-      if (student.discordId) byDiscordId.set(student.discordId, student);
-      if (student.email) byEmail.set(student.email, student);
-      if (student.username) byUsername.set(student.username, student);
-      if (student.name) byName.set(student.name.toLowerCase(), student);
-
-      return student;
+      if (discordId && byDiscordId.has(discordId)) return byDiscordId.get(discordId);
+      if (email && byEmail.has(email)) return byEmail.get(email);
+      if (username && byUsername.has(username)) return byUsername.get(username);
+      if (name && byName.has(name.toLowerCase())) return byName.get(name.toLowerCase());
+      return null;
     };
 
-    // 1. Seed all students from Roster (Bot_Map / All Data)
+    // 1. Seed students STRICTLY and EXCLUSIVELY from Bot_Map roster
+    // Never auto-create students from Discord server members, Attendance, or All Data!
     (rosterRes.students || []).forEach(s => {
       if (!isExcludedStatus(s.status)) {
-        getOrCreateStudent(s);
-      }
-    });
+        const discordId = String(s.discordId || s.id || "").trim();
+        const email = String(s.email || "").toLowerCase().trim();
+        const rawUser = String(s.username || s.user || "").trim();
+        const username = rawUser.toLowerCase().replace(/^@/, '').split('#')[0].trim();
+        const name = String(s.name || s.studentName || s.displayName || "").trim();
 
-    // 1b. Seed from Discord guild members with Active Student role (catch any not in roster)
-    if (guild) {
-      try {
-        const activeStudentRoleName = (constants.ROLES.ACTIVE_STUDENT || 'active student').toLowerCase();
-        const activeRole = guild.roles.cache.find(r => r.name.toLowerCase() === activeStudentRoleName);
-        if (activeRole) {
-          // Fetch all members with this role
-          const members = activeRole.members;
-          members.forEach(member => {
-            if (!byDiscordId.has(member.id)) {
-              // Student is in Discord but missing from roster — add them with 0 pts
-              getOrCreateStudent({
-                discordId: member.id,
-                name: member.displayName || member.user.username,
-                username: member.user.username,
-                status: 'active'
-              });
-            }
-          });
+        let student = findStudent({ discordId, email, username, name });
+        if (!student) {
+          student = {
+            discordId: discordId,
+            name: name || username || email || (discordId ? `Student (${discordId.slice(-4)})` : 'Student'),
+            username: username || rawUser,
+            email: email,
+            phone: s.phone || '',
+            status: s.status || 'active',
+            attendancePoints: 0,
+            jobPoints: 0,
+            jobTotalApps: 0,
+            streakBonus: 0,
+            interviewPoints: 0,
+            interviewCount: 0,
+            taskPoints: 0,
+            taskCount: 0,
+            totalPoints: 0
+          };
+          studentsList.push(student);
+        } else {
+          if (!student.discordId && discordId) student.discordId = discordId;
+          if (!student.email && email) student.email = email;
+          if (!student.username && username) student.username = username;
+          if ((!student.name || student.name === 'Student') && name) student.name = name;
+          if (!student.phone && s.phone) student.phone = s.phone;
         }
-      } catch (e) {
-        // Non-fatal: continue without Discord member seeding
-      }
-    }
 
-    // 2. Ingest any students from Attendance matrix tab
-    const attRows = attendanceRes.rows || attendanceRes.attendance || [];
-    attRows.forEach(att => {
-      if (!isExcludedStatus(att.status)) {
-        getOrCreateStudent(att);
+        if (student.discordId) byDiscordId.set(student.discordId, student);
+        if (student.email) byEmail.set(student.email, student);
+        if (student.username) byUsername.set(student.username, student);
+        if (student.name) byName.set(student.name.toLowerCase(), student);
       }
     });
+
+    const attRows = attendanceRes.rows || attendanceRes.attendance || [];
 
     // Cohort scoring start date (strictly enforces cutoff: e.g. 2026-09-06)
     const cohortStartDate = cohortManager.getScoringStartDate(guildId) || scoring.scoringStartDate || "2026-09-06";
@@ -193,7 +163,7 @@ class ScoringService {
     // Discover individual attendance start date for each student from Attendance tab records
     // STRICT RULE: No student's attendance start date or lifetime scoring can be earlier than cohortStartDate!
     attRows.forEach(att => {
-      const student = getOrCreateStudent(att);
+      const student = findStudent(att);
       if (student && !isExcludedStatus(student.status)) {
         if (att.sessions && typeof att.sessions === 'object') {
           // Identify the earliest marked session date ON OR AFTER cohortStartDate
@@ -225,7 +195,7 @@ class ScoringService {
 
     // 3. Process Attendance Points
     attRows.forEach(att => {
-      const student = getOrCreateStudent(att);
+      const student = findStudent(att);
       if (student && !isExcludedStatus(student.status)) {
         const studentStartDate = student.attendanceStartDate || cohortStartDate;
         if (att.sessions && typeof att.sessions === 'object') {
@@ -303,7 +273,7 @@ class ScoringService {
         if (!isInCurrentWeek(normDate)) return;
       }
 
-      const targetStudent = getOrCreateStudent(j);
+      const targetStudent = findStudent(j);
       if (!targetStudent || isExcludedStatus(targetStudent.status)) return;
 
       const key = targetStudent.discordId || targetStudent.email || targetStudent.name;
@@ -409,7 +379,7 @@ class ScoringService {
 
       const itemDate = item.interviewDate || item.date || item.loggedDate;
       const normDate = DateTimeUtil.normalizeDateStr(itemDate);
-      const student = getOrCreateStudent(item);
+      const student = findStudent(item);
       if (!student || isExcludedStatus(student.status)) return;
 
       const studentStartDate = student.attendanceStartDate || cohortStartDate;
@@ -427,7 +397,7 @@ class ScoringService {
     (tasksRes.tasks || []).forEach(task => {
       const taskDate = task.submittedAt || task.timestamp || task.createdAt;
       const normDate = DateTimeUtil.normalizeDateStr(taskDate);
-      const student = getOrCreateStudent(task);
+      const student = findStudent(task);
       if (!student || isExcludedStatus(student.status)) return;
 
       const studentStartDate = student.attendanceStartDate || cohortStartDate;
