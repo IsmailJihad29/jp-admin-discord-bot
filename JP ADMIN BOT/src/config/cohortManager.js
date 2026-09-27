@@ -28,7 +28,7 @@ const DEFAULT_FEATURES = {
     name: 'Daily Mentor Morning Briefing',
     description: '09:30 AM daily operations digest posted to #jp-admin',
     category: 'Attendance & Briefings',
-    enabled: true,
+    enabled: false,
     aliases: ['briefing', 'adminbriefing', 'morningbriefing']
   },
   job_scraper: {

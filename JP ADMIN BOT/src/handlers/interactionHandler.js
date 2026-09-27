@@ -575,8 +575,15 @@ class InteractionHandler {
 
     // 2. Student Leave Request Modal Submission
     if (customId === 'student_leave_modal') {
-      const startDate = interaction.fields.getTextInputValue('leave_start');
-      const endDate = interaction.fields.getTextInputValue('leave_end');
+      const rawStart = interaction.fields.getTextInputValue('leave_start');
+      const rawEnd = interaction.fields.getTextInputValue('leave_end');
+      let startDate = DateTimeUtil.normalizeDateStr(rawStart) || rawStart.trim();
+      let endDate = DateTimeUtil.normalizeDateStr(rawEnd) || rawEnd.trim() || startDate;
+      if (startDate && endDate && startDate > endDate) {
+        const tmp = startDate;
+        startDate = endDate;
+        endDate = tmp;
+      }
       const reason = interaction.fields.getTextInputValue('leave_reason');
 
       await interaction.deferReply({ ephemeral: true });

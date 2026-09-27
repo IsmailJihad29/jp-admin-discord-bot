@@ -37,8 +37,8 @@ class Scheduler {
   }
 
   scheduleTimeline() {
-    // 1. Daily Mentor Morning Briefing - 09:30 AM Sun-Thu
-    cron.schedule('30 9 * * 0-4', () => this.runDailyAdminMorningBriefing(), { timezone: 'Asia/Dhaka' });
+    // 1. Daily Mentor Morning Briefing - 09:30 AM Sun-Thu (DISABLED per user request)
+    // cron.schedule('30 9 * * 0-4', () => this.runDailyAdminMorningBriefing(), { timezone: 'Asia/Dhaka' });
 
     // 2. Morning Attendance Point Scanner from 'Morning Attendance' Google Form Tab - 12:00 PM Sun-Thu
     cron.schedule('0 12 * * 0-4', () => this.runMorningAttendanceScan(), { timezone: 'Asia/Dhaka' });

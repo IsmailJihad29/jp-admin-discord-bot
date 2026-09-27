@@ -20,6 +20,9 @@
       "forwarder": false,
       "activeWindow": "04:50-23:30"
     },
+    "features": {
+      "mentor_briefing": false
+    },
     "forwarder": {
       "enabled": false,
       "sourceChannelId": null,
@@ -46,6 +49,9 @@
       "forwarder": false,
       "activeWindow": "04:50-23:30"
     },
+    "features": {
+      "mentor_briefing": false
+    },
     "forwarder": {
       "enabled": false,
       "sourceChannelId": null,
@@ -69,6 +75,9 @@
       "forwarder": false,
       "activeWindow": "04:50-23:30"
     },
+    "features": {
+      "mentor_briefing": false
+    },
     "forwarder": {
       "enabled": false,
       "sourceChannelId": null,
@@ -90,6 +99,9 @@
       "enabled": true,
       "forwarder": false,
       "activeWindow": "04:50-23:30"
+    },
+    "features": {
+      "mentor_briefing": false
     },
     "forwarder": {
       "enabled": false,
@@ -113,7 +125,9 @@
       "forwarder": false,
       "activeWindow": "04:50-23:30"
     },
-    "features": {},
+    "features": {
+      "mentor_briefing": false
+    },
     "morningOptional": {
       "users": [],
       "roleId": null

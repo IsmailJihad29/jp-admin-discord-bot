@@ -33,22 +33,31 @@ module.exports = {
         let end = todayStr;
         let reason = "";
 
-        const isFirstDate = /^\d{4}-\d{2}-\d{2}$/.test(args[0]);
-        const isSecondDate = args[1] && /^\d{4}-\d{2}-\d{2}$/.test(args[1]);
+        let d1 = DateTimeUtil.normalizeDateStr(args[0]);
+        let d2 = null;
+        let reasonStartIndex = 1;
 
-        if (isFirstDate && isSecondDate) {
-          start = args[0];
-          end = args[1];
-          reason = args.slice(2).join(' ') || "Excused absence";
-        } else if (isFirstDate) {
-          start = args[0];
-          end = args[0];
-          reason = args.slice(1).join(' ') || "Excused absence";
+        if (d1) {
+          if (args[1] && (args[1].toLowerCase() === 'to' || args[1] === '-' || args[1] === '->' || args[1] === 'থেকে')) {
+            d2 = DateTimeUtil.normalizeDateStr(args[2]);
+            reasonStartIndex = d2 ? 3 : 2;
+          } else if (args[1]) {
+            d2 = DateTimeUtil.normalizeDateStr(args[1]);
+            if (d2) reasonStartIndex = 2;
+          }
+
+          start = d1;
+          end = d2 || d1;
+          if (start > end) {
+            const tmp = start;
+            start = end;
+            end = tmp;
+          }
+          reason = args.slice(reasonStartIndex).join(' ') || "Excused absence";
         } else {
-          // No date mentioned -> Automatically defaults to the date of the post (Today)!
           start = todayStr;
           end = todayStr;
-          reason = args.join(' ');
+          reason = args.join(' ') || "Excused absence";
         }
 
         // Check if student already has an approved or pending leave for these dates
