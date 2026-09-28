@@ -137,11 +137,8 @@ class Scheduler {
 
         const res = await GasClient.scanMorningAttendance(guild.id, todayStr, { exemptDiscordIds });
         if (res && res.status === 'SUCCESS') {
-          const channel = this.getChannel(guild, 'ATTENDANCE') || this.getChannel(guild, 'BOT_ADMIN') || this.getChannel(guild, 'DISCUSSION');
-          if (channel) {
-            const embed = Embeds.attendanceReport("Morning Attendance Synced", todayStr, res);
-            channel.send({ embeds: [embed] }).catch(() => {});
-          }
+          // Public Discord channel announcement/mention disabled per user request.
+          // Attendance record is updated directly in Google Sheets.
 
           // Auto-sync updated scores to Scores tab in Google Sheets
           ScoringService.syncScoresToSheet(guild.id, guild).catch(e => {
@@ -200,17 +197,14 @@ class Scheduler {
 
         const res = await GasClient.scanDailyAttendance(guild.id, todayStr);
         if (res && res.status === 'SUCCESS') {
-          const channel = this.getChannel(guild, 'ATTENDANCE') || this.getChannel(guild, 'BOT_ADMIN') || this.getChannel(guild, 'DISCUSSION');
-          if (channel) {
-            const embed = Embeds.attendanceReport("Daily Attendance Synced", todayStr, res);
-            channel.send({ embeds: [embed] }).catch(() => {});
-          }
+          // Public Discord channel announcement/mention disabled per user request.
+          // Attendance record is updated directly in Google Sheets.
 
           // Check and run any queued custom tab scans
           await this.runQueuedCustomAttendanceScans(guild);
 
-          // Check if any student reached 3 absences in the current week and issue alert
-          await this.checkAndWarnInactiveStudents(guild);
+          // Student inactivity warning mentions disabled per user request (sheet is updated).
+          // await this.checkAndWarnInactiveStudents(guild);
 
           // Automatically sync Active / Inactive roles and #resume-needed access
           if (cohortManager.isFeatureEnabled(guild.id, 'referral_lockout')) {

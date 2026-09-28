@@ -69,7 +69,7 @@ module.exports = {
 
         const reportDesc = `**Session Date:** \`${todayDate}\`\n**Present:** **${presentList.length}** | **Absent:** **${absentList.length}**\n\n${
           absentList.length > 0
-            ? `**Absent Students:**\n${absentList.map(a => `• <@${a.discordId}> (${a.name})`).slice(0, 20).join('\n')}`
+            ? `**Absent Students:**\n${absentList.map(a => `• **${a.name || 'Student'}**`).slice(0, 20).join('\n')}`
             : '🎉 Full Attendance Today!'
         }`;
 

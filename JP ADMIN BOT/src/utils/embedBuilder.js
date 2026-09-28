@@ -172,22 +172,22 @@ class Embeds {
 
     if (present.length > 0) {
       desc += `**✅ Attended (+1 pt) [${present.length}]:**\n` +
-        present.map(r => `• ${r.discordId ? `<@${r.discordId}>` : `**${r.name}**`} — \`+1 pt\``).join('\n') + '\n\n';
+        present.map(r => `• **${r.name || 'Student'}** — \`+1 pt\``).join('\n') + '\n\n';
     }
 
     if (absent.length > 0) {
       desc += `**❌ Absent (-1 pt) [${absent.length}]:**\n` +
-        absent.map(r => `• ${r.discordId ? `<@${r.discordId}>` : `**${r.name}**`} — \`-1 pt\``).join('\n') + '\n\n';
+        absent.map(r => `• **${r.name || 'Student'}** — \`-1 pt\``).join('\n') + '\n\n';
     }
 
     if (leave.length > 0) {
       desc += `**🌴 Approved Leave (0 pt) [${leave.length}]:**\n` +
-        leave.map(r => `• ${r.discordId ? `<@${r.discordId}>` : `**${r.name}**`} — \`0 pt\``).join('\n') + '\n\n';
+        leave.map(r => `• **${r.name || 'Student'}** — \`0 pt\``).join('\n') + '\n\n';
     }
 
     if (optional.length > 0) {
       desc += `**☕ Morning Optional / Excused (0 pt) [${optional.length}]:**\n` +
-        optional.map(r => `• ${r.discordId ? `<@${r.discordId}>` : `**${r.name}**`} — \`0 pt (Optional)\``).join('\n') + '\n\n';
+        optional.map(r => `• **${r.name || 'Student'}** — \`0 pt (Optional)\``).join('\n') + '\n\n';
     }
 
     if (records.length === 0) {
